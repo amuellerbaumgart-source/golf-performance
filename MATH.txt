@@ -1,402 +1,270 @@
 GOLF PERFORMANCE EXPERIMENTS — MATHEMATICS REFERENCE
-=====================================================
+==================================================
 
-Purpose
--------
+Compare A (baseline) with B (treatment), changing one golf variable at a
+time. The primary analysis compares matched A/B blocks; individual-shot
+statistics describe the shots themselves. The question is: how much did B
+change performance, and how certain are we about that change?
 
-This file describes the calculations currently implemented by the app and
-the statistical improvements still planned for later phases. It is intentionally
-separate from the README so that the assumptions and formulas can be
-reviewed without reading the Streamlit UI.
+There are two calculation paths:
 
-The central experiment is an A/B comparison:
+    With a testing protocol: compare paired blocks (the primary method).
+    Without a protocol: compare individual shots (the legacy method).
 
-    A = baseline configuration
-    B = treatment configuration
-
-Only one golf variable should change between A and B.
-
-
-1. Metric analysis scale
-------------------------
-
-The app first converts raw entered values to an analysis scale.
-
-Raw metric:
-
-    x_analysis = x
-
-Absolute-value metric, such as offline distance:
-
-    x_analysis = |x|
-
-Target metric, such as launch angle or spin:
-
-    x_analysis = |x - target|
-
-For target metrics, lower absolute error is better. The target itself is
-not treated as a second observed condition; the distance from the target is
-the quantity being compared.
-
-Invalid, non-numeric, NaN, and infinite values are excluded from the
-calculation and reported as warnings.
+"Legacy" means an older calculation retained so existing code and data
+can still be analyzed without supplying a protocol. It is implemented,
+not a planned feature, and is not the primary method for block experiments.
 
 
-2. Descriptive statistics
--------------------------
+1. Prepare and summarize the data
+--------------------------------
 
-For each configuration, the app reports the number of valid observations,
-mean, median, and sample standard deviation.
+Convert each entered value x to the metric's analysis scale:
 
-For observations x_1, ..., x_n:
+    Raw metric:        x
+    Absolute metric:   |x|          (e.g., offline distance)
+    Target metric:     |x - target| (e.g., launch angle)
 
-    mean = (x_1 + ... + x_n) / n
+The bars | | mean absolute value: ignore the sign. Thus, shots 5 yards left
+and 5 yards right both have an offline distance of 5 yards. A launch angle
+of 14 degrees with a target of 12 degrees has an error of 2 degrees.
+For target metrics, lower error is better.
 
-    median = middle ordered value
+Invalid or non-numeric values, NaN (a missing or undefined number), and
+infinite values are excluded and reported as warnings.
 
-    sample variance = sum((x_i - mean)^2) / (n - 1)
+For each configuration, report the valid shot count n and:
 
-    sample standard deviation = sqrt(sample variance)
+    mean = sum(x_i) / n
+    median = middle ordered value (average the middle two if n is even)
+    sample SD = sqrt(sum((x_i - mean)^2) / (n - 1))
 
-The n - 1 denominator is used because the observations are treated as a
-sample rather than the complete population of all possible shots.
-
-The current implementation reports these statistics at the individual-shot
-level.
-
-
-3. Observed difference
-----------------------
-
-The current difference is always calculated as treatment minus baseline:
-
-    difference = mean(B) - mean(A)
-
-This raw difference is intentionally not direction-adjusted in the
-statistics module. The decision module interprets the sign using the metric
-direction.
-
-For a non-zero baseline mean, the current percentage difference is:
-
-    percentage_difference =
-        (mean(B) - mean(A)) / |mean(A)| * 100
-
-When mean(A) is zero, percentage difference is unavailable because the
-denominator is zero.
+Here, x_i is one analyzed shot value, sum means add all values, and sqrt
+means square root. The mean is the average; the median is the midpoint.
+Standard deviation (SD) describes how widely shots vary around the mean,
+in the metric's own units. Larger SD means less consistency. Dividing by
+n - 1 corrects the variance estimate for using a sample; SD needs two shots.
 
 
-4. Legacy inferential analysis: Welch's t-test
-------------------------------------------------
+2. Difference and practical significance
+---------------------------------------
 
-CURRENT METHOD
+At the shot level:
 
-When analysis is called without a protocol, the compatibility path uses a
-two-sided Welch independent two-sample t-test. Its explicit metadata is:
+    shot_difference = mean(B) - mean(A)
+
+The primary analysis instead uses the average difference across complete
+block pairs (Section 3). These differences agree when all equal-sized
+blocks are complete; excluding a pair can make them differ. Percentage
+change uses the selected analysis difference and the valid A-shot mean:
+
+    percentage_difference = difference / |mean(A)| * 100
+
+Percentage change is unavailable when mean(A) is zero. With all equal-sized
+blocks complete, means of 100.25 and 105.50 yards give +5.25 yards, or
+about +5.24%.
+
+Interpret the sign according to the metric:
+
+    Higher is better:  improvement = difference
+    Lower is better:   improvement = -difference
+
+Target metrics use the lower-is-better rule on absolute error. An effect
+is practically meaningful when improvement meets the predefined absolute
+threshold T, or its percentage improvement meets the percentage threshold P,
+depending on the threshold selected before testing. For example, if an
+extra 3 yards is your minimum worthwhile gain, a 1-yard gain does not meet
+that threshold even if it is statistically significant.
+
+Statistical significance is evaluated separately:
+
+    statistically_significant = p_value < alpha  (default alpha = 0.05)
+
+A p-value asks: if there were no average A/B difference and the model's
+assumptions held, how likely would a result at least this extreme be?
+It is not the probability that B is better or that the result is "due to
+chance." Alpha is the cutoff chosen for declaring statistical significance.
+A decision considers both statistical evidence and practical relevance.
+
+
+3. Primary method: paired block analysis
+---------------------------------------
+
+A block is a consecutive group of shots using one configuration. The
+protocol pairs adjacent A and B blocks, in either order, so each comparison
+is made close in time. For example, five A shots followed by five B shots
+produce one paired comparison, not ten independent comparisons.
+
+Both blocks must contain the required number of valid values for the
+metric. Otherwise, that pair is excluded from the paired analysis.
+For each complete pair, calculate:
+
+    d_i = mean(B shots in block i) - mean(A shots in block i)
+
+With k pairs and s_d = sample SD of their differences:
+
+    mean_difference = mean(d_i)
+    SE = s_d / sqrt(k)
+    df = k - 1
+    t = mean_difference / SE
+    95% confidence interval = mean_difference +/- t_(0.975, df) * SE
+
+SD describes variation among pair differences; standard error (SE)
+describes uncertainty in their estimated average. More independent pairs
+usually reduce SE. The t statistic expresses the average difference in
+units of SE: a larger absolute t is stronger evidence against zero change.
+
+Degrees of freedom (df) determine the shape of the t distribution, which
+allows for uncertainty in the estimated SD. The multiplier t_(0.975, df)
+leaves 2.5% in each tail. "Two-sided" means the test considers changes in
+either direction. At least two complete pairs are required.
+
+A 95% confidence interval shows the range supported by this procedure.
+Across repeated experiments satisfying the assumptions, about 95% of
+intervals constructed this way would contain the true average difference.
+A wide interval means the effect is still imprecisely estimated.
+
+The paired effect size standardizes the difference and corrects for a
+small sample. Unlike a difference in yards or degrees, this is unitless:
+
+    d_z = mean_difference / s_d
+    J = 1 - 3 / (4(k - 1) - 1)
+    paired Hedges' g = J * d_z
+
+For example, d_z = 1 means the average difference equals one SD of the
+pair differences. J reduces the small-sample tendency to overestimate the
+standardized effect. Practical importance still depends on your threshold.
+
+The inferential sample size is k block pairs, not the number of shots.
+Matching blocks accounts for the protocol's time structure without treating
+every repeated shot as an independent replication. It still assumes pair
+differences are independent of one another and, especially with few pairs,
+approximately normally distributed (following a symmetric, bell-shaped
+pattern). Pairing does not remove every effect of fatigue, learning, or
+changing conditions.
+
+Bootstrap sensitivity analysis
+
+With at least five complete pairs, resample k paired differences with
+replacement (a difference can be selected more than once) and calculate
+their mean repeatedly. Keeping the middle 95% of these means gives a
+second interval, bounded by the 2.5th and 97.5th percentiles. A fixed random
+seed repeats the same resampling choices, making the result reproducible.
+This checks whether the interval changes substantially with a different
+method; the paired t interval remains primary. Resampling does not create
+new evidence or fix dependence between pairs.
+
+
+4. Power and minimum detectable effect
+--------------------------------------
+
+Planning uses a two-sided paired t-test model (method = paired_block_t),
+with default alpha = 0.05 and target power = 0.80.
+
+Power is the probability of detecting a specified real effect under the
+model. At 80% power, about 80 out of 100 repeated experiments would flag
+that effect as statistically significant if the planning assumptions held.
+
+Before block data exists, estimate variability from individual-shot SD:
+
+    estimated_block_difference_SD
+        = estimated_shot_SD * sqrt(2 / shots_per_block)
+
+    standardized_effect
+        = practical_threshold_in_measurement_units
+          / estimated_block_difference_SD
+
+Averaging shots reduces variability under the independence assumption;
+the factor 2 accounts for subtracting two equally variable block means.
+
+Solve the power equation for the required number of block pairs, round up
+to at least two pairs, and convert to shots:
+
+    recommended_shots_per_configuration
+        = recommended_block_pairs * shots_per_block
+
+Achieved power is recalculated after rounding. For a chosen shot count,
+convert to block pairs and solve for the smallest effect detectable at the
+target power. This is the minimum detectable effect (MDE):
+
+    MDE = standardized_MDE * estimated_block_difference_SD
+
+MDE describes the experiment's sensitivity, not the smallest effect that
+matters to you or a guarantee that smaller effects will go undetected.
+
+The SD conversion assumes roughly independent shots within blocks and
+similar variability in A and B. Correlated shots, fatigue, or learning can
+make planning estimates optimistic, meaning more shots may be needed than
+the calculation suggests.
+
+
+5. Legacy method: independent shots
+----------------------------------
+
+The legacy calculation puts all valid A shots in one group and all valid
+B shots in another, ignoring their order and block pairing. It applies a
+two-sided Welch t-test to the difference between those group means.
+
+The analysis function selects it only when no testing protocol is supplied
+(protocol=None). Its purpose is compatibility with older or direct calls
+that supply shot data alone. The report identifies this path as:
 
     statistical_method = welch_independent_two_sample_t
     analysis_unit = individual_shot
 
-This method does not assume equal variances between A and B, but it does
-assume that observations are independent within and between conditions.
-
-For the current method:
+It requires at least two valid shots per configuration and assumes
+independent observations: knowing how one shot deviated should not help
+predict another shot's deviation. It allows A and B to have different
+variances (variance is SD squared). With small samples, each group's values
+should also be approximately normally distributed. Using shot counts n_A,
+n_B and sample SDs s_A, s_B:
 
     SE = sqrt(s_A^2 / n_A + s_B^2 / n_B)
-
     t = (mean(B) - mean(A)) / SE
 
-The Welch-Satterthwaite degrees of freedom are:
+    Welch-Satterthwaite degrees of freedom:
+    df = (s_A^2/n_A + s_B^2/n_B)^2 /
+         [(s_A^2/n_A)^2/(n_A - 1) + (s_B^2/n_B)^2/(n_B - 1)]
 
-    df =
-      (s_A^2/n_A + s_B^2/n_B)^2 /
-      [ (s_A^2/n_A)^2/(n_A - 1)
-        + (s_B^2/n_B)^2/(n_B - 1) ]
+    95% confidence interval = difference +/- t_(0.975, df) * SE
 
-The two-sided p-value is calculated from the t distribution with this
-degrees-of-freedom value.
+The two-sided p-value uses the t distribution with these degrees of freedom.
+The legacy effect size uses a pooled SD, a weighted combination of the
+two groups' shot variability:
 
-The 95% confidence interval is:
-
-    difference +/- t_(0.975, df) * SE
-
-At least two valid observations per configuration are required for these
-current inferential statistics.
-
-IMPORTANT LEGACY LIMITATION
-
-The app's actual testing protocol uses repeated shots from one golfer in
-alternating blocks. Those shots are unlikely to be fully independent due to
-fatigue, learning, order, and environmental effects. Therefore, the current
-shot-level Welch result can overstate the effective amount of information.
-
-The protocol-aware application workflow no longer uses this method as its
-primary analysis. It remains available for compatibility with direct callers
-and legacy analysis fixtures.
-
-
-5. Legacy effect size: independent-group Hedges' g
----------------------------------------------------
-
-The current implementation uses a pooled standard deviation:
-
-    s_pooled = sqrt(
-        ((n_A - 1)s_A^2 + (n_B - 1)s_B^2)
-        / (n_A + n_B - 2)
-    )
-
-Cohen's d is:
-
-    d = (mean(B) - mean(A)) / s_pooled
-
-The small-sample correction is:
-
+    s_pooled = sqrt(((n_A - 1)s_A^2 + (n_B - 1)s_B^2)
+                    / (n_A + n_B - 2))
+    d = difference / s_pooled
     J = 1 - 3 / (4(n_A + n_B - 2) - 1)
-
-Hedges' g is:
-
-    g = J * d
-
-This is appropriate as an effect-size summary for the legacy independent
-two-group calculation. The protocol-aware primary analysis uses a paired
-effect size instead.
-
-
-6. Practical significance
--------------------------
-
-Statistical significance and practical significance are evaluated
-separately.
-
-For a higher-is-better metric:
-
-    observed_improvement = difference
-
-For a lower-is-better metric:
-
-    observed_improvement = -difference
-
-For target metrics, the analysis scale is absolute error from target, so
-the metric is evaluated as lower-is-better:
-
-    observed_improvement = -difference_in_absolute_error
-
-For an absolute practical threshold T:
-
-    practically_meaningful = observed_improvement >= T
-
-For a percentage threshold P:
-
-    practically_meaningful = observed_improvement_percentage >= P
-
-The current decision rule for statistical significance is:
-
-    statistically_significant = p_value < alpha
-
-with alpha = 0.05 by default.
-
-The app does not use p < 0.05 as its only decision rule. It combines the
-statistical result with the predefined practical threshold.
-
-
-7. Current power calculation: paired blocks
-----------------------------
-
-The protocol-aware power method is explicitly:
-
-    method = paired_block_t
-
-The practical threshold is treated as the effect worth detecting:
-
-    expected_effect = practical threshold in measurement units
-
-The standardized effect is:
-
-    standardized_effect = expected_effect / expected_standard_deviation
-
-The sample-size calculation uses a paired one-sample t-test power model on
-paired A/B block differences with:
-
-    alpha = 0.05
-    target power = 0.80
-    two-sided alternative
-
-The expected individual-shot SD is converted to an estimated block-difference
-SD using:
-
-    expected_block_difference_SD
-        = expected_shot_SD * sqrt(2 / block_size)
-
-The raw result is a number of paired block comparisons. It is rounded upward
-to a whole number of block pairs and then converted to shots:
-
-    recommended_shots_per_configuration
-        = recommended_block_pairs * block_size
-
-Achieved power is recalculated after rounding the sample size upward.
-
-The conversion from shot SD to block-difference SD assumes roughly
-independent shots within blocks. It is a planning approximation and can be
-optimistic when shots are autocorrelated.
-
-Power is not a guarantee that a result will be statistically significant.
-It is the probability of detecting the specified effect under the chosen
-model if that effect and its variability are approximately correct.
-
-
-8. Current minimum detectable effect
--------------------------------------
-
-For a selected number of shots per configuration, the current MDE converts
-the shots into paired block pairs and solves the paired power equation for the
-smallest standardized effect producing the target power.
-
-The result is converted back to measurement units:
-
-    MDE = standardized_MDE * expected_block_difference_SD
-
-The current MDE therefore inherits the shot-SD-to-block-SD planning
-approximation.
-
-
-9. Primary method: paired block analysis
----------------------------------------------
-
-The protocol-aware analysis uses the protocol's block structure.
-
-For each A/B block pair:
-
-    A_block_mean = mean of the A shots in the block
-    B_block_mean = mean of the B shots in the block
-
-    paired_difference_i = B_block_mean_i - A_block_mean_i
-
-The paired block difference, rather than every individual shot, becomes
-the primary inferential unit.
-
-For k paired block differences:
-
-    mean_difference = mean(paired_difference_i)
-
-    SE = sd(paired_difference_i) / sqrt(k)
-
-    df = k - 1
-
-    t = mean_difference / SE
-
-The 95% confidence interval will be:
-
-    mean_difference +/- t_(0.975, k - 1) * SE
-
-The paired effect size uses the standard deviation of the paired differences:
-
-    d_z = mean_difference / sd(paired_difference)
-
-    J = 1 - 3 / (4(k - 1) - 1)
-
-    paired Hedges' g = J * d_z
-
-The paired t-test requires at least two complete block pairs. The app keeps
-the shot-level A and B summaries for descriptive context, but reports the
-paired block count separately as the inferential sample size.
-
-This method is necessary because the current protocol creates matched time
-blocks. It avoids presenting every repeated shot as an independent
-replication unit.
-
-
-10. Power approximation for the pilot
-----------------------------------------------
-
-Before data exists, a golfer may know or estimate individual-shot SD but
-usually will not know the SD of paired block differences.
-
-The pilot approximation uses:
-
-    estimated_SD_block_difference
-        = estimated_shot_SD * sqrt(2 / shots_per_block)
-
-This assumes approximately independent shots within each block and similar
-variability in A and B. The app will label this as a planning approximation.
-
-After data is collected, the actual SD of paired block differences will be
-calculated and compared with the planning estimate.
-
-Positive within-block autocorrelation, fatigue, or learning can make the
-approximation optimistic. The report will warn about this limitation.
-
-
-11. Bootstrap sensitivity analysis
-----------------------------------
-
-The app resamples the observed paired block differences
-with replacement.
-
-For each bootstrap replicate:
-
-    sample k paired differences with replacement
-    calculate their mean
-
-The 2.5th and 97.5th percentiles of the bootstrap means will form a
-sensitivity 95% interval.
-
-The paired t interval remains the primary inferential interval because it is
-simple to explain. The bootstrap interval is a robustness check, especially
-for skewed or non-normal block differences. The bootstrap uses a fixed seed
-for reproducible reports and is shown only when at least five complete block
-pairs are available.
-
-
-12. Confirmatory and exploratory interpretation
------------------------------------------------
-
-The primary metric is selected before results are reviewed and is the only
-metric treated as confirmatory.
-
-Secondary metrics remain useful for identifying tradeoffs, but their
-inferential results are exploratory/descriptive. Showing a nominal p-value
-for a secondary metric does not make it a confirmatory finding. The report
-labels secondary results as exploratory and warns that their nominal
-p-values should not be interpreted as independent confirmatory evidence.
-
-This avoids treating many simultaneous p-values as though they were one
-predefined hypothesis test.
-
-
-13. Worked current example
---------------------------
-
-Suppose:
-
-    A mean = 100.25 yards
-    B mean = 105.50 yards
-    A SD = 1.7078 yards
-    B SD = 1.2910 yards
-    n_A = n_B = 4
-
-Then:
-
-    difference = 105.50 - 100.25 = 5.25 yards
-
-    percentage difference = 5.25 / 100.25 * 100
-                         approximately 5.2369 percent
-
-The current Welch test calculates uncertainty using the two independent
-sample variances and reports a two-sided p-value and 95% interval.
-
-This example demonstrates the current calculation only. It does not remove
-the need for the planned block-aware analysis when the observations came
-from repeated shots by one golfer.
-
-
-14. Interpretation rules
-------------------------
-
-The app should communicate all of the following separately:
-
-    magnitude: how large was B - A?
-    uncertainty: how wide is the confidence interval?
-    statistical evidence: what does the chosen test indicate?
-    practical relevance: did the effect exceed the predefined threshold?
-    design limitations: how many independent units were actually observed?
-
-The app should not reduce these dimensions to the statement "B is better."
+    Hedges' g = J * d
+
+Repeated shots from one golfer may be correlated, so this method can
+overstate the information available, making confidence intervals too narrow
+and p-values too small. For example, a run of shots affected by fatigue
+does not provide as much independent information as its shot count implies.
+
+Welch's test is useful for genuinely independent groups. The reason to use
+paired blocks here is the experiment's structure, not that Welch's test is
+universally inferior. The paired and legacy Hedges' g values also use
+different SDs, so they should not be compared as interchangeable effect sizes.
+
+For either method, the formulas involving division by SD or SE require
+nonzero variability. If variability is zero but the difference is nonzero,
+the app reports the inferential results as unavailable. If both are zero,
+it returns a [0, 0] interval, p = 1, and g = 0 as a software convention;
+this does not establish that future shots will have no variability.
+
+
+6. Interpret the results
+-----------------------
+
+Choose the primary metric before reviewing results; only it is confirmatory,
+meaning it tests the question specified in advance. Secondary metrics are
+exploratory: they reveal possible tradeoffs or questions for a later test.
+Their nominal p-values are calculated separately, without adjustment for
+examining multiple metrics. Looking at many metrics increases the chance
+of finding a small p-value even when no real effect exists.
+
+Report effect magnitude, confidence interval, statistical evidence,
+practical relevance, and design limitations separately. A single statement
+such as "B is better" does not capture all five.
