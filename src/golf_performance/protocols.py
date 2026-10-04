@@ -103,12 +103,14 @@ class TestingProtocol:
             and self.design_mode is ExperimentDesignMode.CONFIRMATORY
         ):
             raise ValueError("Confirmatory shot count must match the power recommendation")
-        if self.shots_per_configuration > HARD_SHOT_LIMIT:
-            raise ValueError("Protocol exceeds the maximum shot safety limit")
         if self.shots_per_configuration % self.block_size != 0:
             raise ValueError(
                 "Shots per configuration must be divisible by the block size"
             )
+        if self.shots_per_configuration < 2 * self.block_size:
+            raise ValueError("Protocol must contain at least two paired blocks per configuration")
+        if self.shots_per_configuration > HARD_SHOT_LIMIT:
+            raise ValueError("Protocol exceeds the maximum shot safety limit")
         if self.minimum_detectable_effect is None:
             object.__setattr__(
                 self,
@@ -116,6 +118,7 @@ class TestingProtocol:
                 calculate_minimum_detectable_effect(
                     expected_standard_deviation=self.power_analysis.expected_standard_deviation,
                     shots_per_configuration=self.shots_per_configuration,
+                    block_size=self.block_size,
                     alpha=self.power_analysis.alpha,
                     target_power=self.power_analysis.target_power,
                 ),
@@ -174,13 +177,13 @@ class TestingProtocol:
 class ProtocolRecommendation:
     """UI-ready alternatives from which the golfer selects one plan."""
 
-    confirmatory: TestingProtocol
+    confirmatory: TestingProtocol | None
     exploratory: TestingProtocol
     selected_mode: ExperimentDesignMode | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "confirmatory": self.confirmatory.to_dict(),
+            "confirmatory": self.confirmatory.to_dict() if self.confirmatory else None,
             "exploratory": self.exploratory.to_dict(),
             "selected_mode": self.selected_mode.value if self.selected_mode else None,
         }
@@ -189,26 +192,38 @@ class ProtocolRecommendation:
     def from_dict(cls, data: dict[str, Any]) -> "ProtocolRecommendation":
         selected_mode = data.get("selected_mode")
         return cls(
-            confirmatory=TestingProtocol.from_dict(data["confirmatory"]),
+            confirmatory=(
+                TestingProtocol.from_dict(data["confirmatory"])
+                if data.get("confirmatory") is not None
+                else None
+            ),
             exploratory=TestingProtocol.from_dict(data["exploratory"]),
             selected_mode=ExperimentDesignMode(selected_mode) if selected_mode else None,
         )
 
     def __post_init__(self) -> None:
-        if self.confirmatory.design_mode is not ExperimentDesignMode.CONFIRMATORY:
+        if self.confirmatory is not None and self.confirmatory.design_mode is not ExperimentDesignMode.CONFIRMATORY:
             raise ValueError("Confirmatory option must use confirmatory mode")
         if self.exploratory.design_mode is not ExperimentDesignMode.EXPLORATORY:
             raise ValueError("Exploratory option must use exploratory mode")
-        if self.confirmatory.start_configuration != self.exploratory.start_configuration:
+        if self.confirmatory is not None and self.confirmatory.start_configuration != self.exploratory.start_configuration:
             raise ValueError("Protocol options must use the same starting configuration")
         if self.selected_mode is not None and not isinstance(
             self.selected_mode, ExperimentDesignMode
         ):
             raise ValueError("Selected mode must be confirmatory or exploratory")
+        if self.selected_mode is ExperimentDesignMode.CONFIRMATORY and self.confirmatory is None:
+            raise ValueError("A recommendation cannot select an unavailable confirmatory plan")
 
     @property
-    def options(self) -> tuple[TestingProtocol, TestingProtocol]:
-        return self.confirmatory, self.exploratory
+    def options(self) -> tuple[TestingProtocol, ...]:
+        return ((self.confirmatory,) if self.confirmatory is not None else ()) + (self.exploratory,)
+
+    @property
+    def confirmatory_shots_required(self) -> int:
+        """Powered shots per configuration, even when not operationally available."""
+
+        return self.exploratory.power_analysis.recommended_shots_per_configuration
 
     @property
     def selected(self) -> TestingProtocol | None:
@@ -223,6 +238,8 @@ class ProtocolRecommendation:
     def select(self, mode: ExperimentDesignMode) -> ProtocolRecommendation:
         if not isinstance(mode, ExperimentDesignMode):
             raise ValueError("Selected mode must be confirmatory or exploratory")
+        if mode is ExperimentDesignMode.CONFIRMATORY and self.confirmatory is None:
+            raise ValueError("The confirmatory plan exceeds the operational shot limit")
         return replace(self, selected_mode=mode)
 
 
@@ -258,6 +275,7 @@ def _build_protocol(
     minimum_detectable_effect = calculate_minimum_detectable_effect(
         expected_standard_deviation=power_analysis.expected_standard_deviation,
         shots_per_configuration=shots_per_configuration,
+        block_size=block_size,
         alpha=power_analysis.alpha,
         target_power=power_analysis.target_power,
     )
@@ -288,6 +306,8 @@ def _build_protocol(
         f"ESTIMATED TIME: {shots_per_configuration * 2 * seconds_per_shot / 60:.1f} minutes",
         f"MINIMUM DETECTABLE EFFECT: {minimum_detectable_effect:g} {primary_metric.unit}",
         f"TARGET POWER: {power_analysis.target_power:.0%} at alpha={power_analysis.alpha:g}",
+        f"PAIRED BLOCKS: {shots_per_configuration // block_size} per configuration",
+        f"EXPECTED BLOCK-DIFFERENCE SD: {power_analysis.expected_block_difference_standard_deviation:g} {primary_metric.unit}",
         f"STARTING CONFIGURATION: {start_configuration}",
         f"ANALYSIS TRANSFORM: {primary_metric.analysis_transform.value}",
         "Keep everything else constant where reasonably possible.",
@@ -342,6 +362,8 @@ def generate_protocol_options(
         raise ValueError("Exploratory shot cap must be a positive integer")
     if exploratory_shots_per_configuration % block_size != 0:
         raise ValueError("Exploratory shot cap must be divisible by the block size")
+    if exploratory_shots_per_configuration < 2 * block_size:
+        raise ValueError("Exploratory shot cap must allow at least two paired blocks per configuration")
     if exploratory_shots_per_configuration > HARD_SHOT_LIMIT:
         raise ValueError("Exploratory shot cap exceeds the maximum shot safety limit")
     if (
@@ -360,15 +382,17 @@ def generate_protocol_options(
         target_power=target_power,
         block_size=block_size,
     )
-    confirmatory = _build_protocol(
-        experiment,
-        mode=ExperimentDesignMode.CONFIRMATORY,
-        shots_per_configuration=power_analysis.recommended_shots_per_configuration,
-        block_size=block_size,
-        power_analysis=power_analysis,
-        seconds_per_shot=seconds_per_shot,
-        expected_baseline_mean=expected_baseline_mean,
-    )
+    confirmatory = None
+    if power_analysis.recommended_shots_per_configuration <= HARD_SHOT_LIMIT:
+        confirmatory = _build_protocol(
+            experiment,
+            mode=ExperimentDesignMode.CONFIRMATORY,
+            shots_per_configuration=power_analysis.recommended_shots_per_configuration,
+            block_size=block_size,
+            power_analysis=power_analysis,
+            seconds_per_shot=seconds_per_shot,
+            expected_baseline_mean=expected_baseline_mean,
+        )
     exploratory = _build_protocol(
         experiment,
         mode=ExperimentDesignMode.EXPLORATORY,
@@ -393,7 +417,7 @@ def generate_protocol(
 ) -> TestingProtocol:
     """Backward-compatible helper returning the confirmatory option."""
 
-    return generate_protocol_options(
+    confirmatory = generate_protocol_options(
         experiment,
         expected_standard_deviation=expected_standard_deviation,
         expected_baseline_mean=expected_baseline_mean,
@@ -402,3 +426,6 @@ def generate_protocol(
         block_size=block_size,
         seconds_per_shot=seconds_per_shot,
     ).confirmatory
+    if confirmatory is None:
+        raise ValueError("The confirmatory plan exceeds the operational shot limit")
+    return confirmatory

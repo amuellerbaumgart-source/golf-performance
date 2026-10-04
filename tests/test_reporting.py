@@ -66,6 +66,8 @@ def test_complete_experiment_builds_report_and_export() -> None:
     assert list(export["metric"]) == ["Carry"]
     assert export.loc[0, "protocol_mode"] == "Exploratory"
     assert "decision" in export.columns
+    assert export.loc[0, "evidence_role"] == "Confirmatory"
+    assert "bootstrap_confidence_interval_lower" in export.columns
 
 
 def test_incomplete_results_cannot_build_final_report() -> None:

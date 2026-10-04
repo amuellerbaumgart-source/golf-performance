@@ -74,6 +74,8 @@ def test_list_experiments_returns_summaries(tmp_path) -> None:
     assert len(summaries) == 1
     assert summaries[0].experiment_id == current.experiment_id
     assert summaries[0].name == current.name
+    assert summaries[0].changed_variable == current.changed_variable
+    assert summaries[0].primary_metric_name == current.primary_metric.display_name
 
 
 def test_storage_rejects_unknown_results_experiment(tmp_path) -> None:

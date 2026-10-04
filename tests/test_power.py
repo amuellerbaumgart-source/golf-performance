@@ -3,7 +3,12 @@ import math
 import pytest
 
 from golf_performance.domain import MetricDefinition, MetricDirection, ThresholdType
-from golf_performance.power import calculate_power_analysis
+from golf_performance.power import (
+    POWER_METHOD,
+    calculate_minimum_detectable_effect,
+    calculate_power_analysis,
+    estimate_block_difference_standard_deviation,
+)
 
 
 def metric(
@@ -30,11 +35,40 @@ def test_power_analysis_uses_practical_threshold_as_effect() -> None:
     )
 
     assert result.expected_effect == 3.0
-    assert result.standardized_effect == pytest.approx(0.5)
+    assert result.expected_block_difference_standard_deviation == pytest.approx(
+        estimate_block_difference_standard_deviation(6.0, 5)
+    )
+    assert result.standardized_effect == pytest.approx(
+        3.0 / estimate_block_difference_standard_deviation(6.0, 5)
+    )
+    assert result.method == "paired_block_t"
+    assert result.recommended_block_pairs >= 2
+    assert result.recommended_shots_per_configuration == result.recommended_block_pairs * 5
     assert result.recommended_shots_per_configuration % 5 == 0
     assert result.recommended_shots_per_configuration >= math.ceil(
         result.raw_shots_per_configuration
     )
+    assert result.method == POWER_METHOD
+    assert result.method == "paired_block_t"
+
+
+def test_minimum_detectable_effect_is_consistent_with_power_model() -> None:
+    standard_deviation = 6.0
+    shots_per_configuration = 40
+    mde = calculate_minimum_detectable_effect(
+        expected_standard_deviation=standard_deviation,
+        shots_per_configuration=shots_per_configuration,
+        alpha=0.05,
+        target_power=0.80,
+    )
+
+    result = calculate_power_analysis(
+        metric(threshold=mde),
+        expected_standard_deviation=standard_deviation,
+        block_size=5,
+    )
+
+    assert result.raw_shots_per_configuration <= shots_per_configuration + 1
 
 
 @pytest.mark.parametrize("direction", [MetricDirection.HIGHER, MetricDirection.LOWER])

@@ -19,6 +19,7 @@ from .power import (
     PowerAnalysis,
     calculate_minimum_detectable_effect,
     calculate_power_analysis,
+    estimate_block_difference_standard_deviation,
 )
 from .storage import ExperimentSummary, FileSystemStorage, StoredExperiment
 from .decision import (
@@ -50,6 +51,7 @@ __all__ = [
     "PowerAnalysis",
     "calculate_minimum_detectable_effect",
     "calculate_power_analysis",
+    "estimate_block_difference_standard_deviation",
     "ExperimentSummary",
     "FileSystemStorage",
     "StoredExperiment",

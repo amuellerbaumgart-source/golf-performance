@@ -41,7 +41,7 @@ def build_experiment_report(
             f"Report requires {protocol.total_shots} complete shots; found {valid_shots}."
         )
 
-    analyses = analyze_experiment(results, experiment)
+    analyses = analyze_experiment(results, experiment, protocol)
     decision = evaluate_experiment(analyses, experiment)
     return ExperimentReport(
         experiment=experiment,
@@ -73,18 +73,24 @@ def build_report_export(report: ExperimentReport) -> pd.DataFrame:
                 "analysis_basis": analysis.analysis_basis,
                 "baseline_n": analysis.baseline.n,
                 "treatment_n": analysis.treatment.n,
+                "analysis_unit": analysis.analysis_unit,
+                "statistical_method": analysis.statistical_method,
+                "paired_block_count": analysis.n_pairs,
                 "baseline_mean": analysis.baseline.mean,
                 "treatment_mean": analysis.treatment.mean,
                 "difference": analysis.difference,
                 "percentage_difference": analysis.percentage_difference,
                 "confidence_interval_lower": analysis.confidence_interval_lower,
                 "confidence_interval_upper": analysis.confidence_interval_upper,
+                "bootstrap_confidence_interval_lower": analysis.bootstrap_confidence_interval_lower,
+                "bootstrap_confidence_interval_upper": analysis.bootstrap_confidence_interval_upper,
                 "p_value": analysis.p_value,
                 "hedges_g": analysis.hedges_g,
                 "practical_threshold": decision.practical_threshold,
                 "threshold_type": decision.threshold_type.value,
                 "statistically_significant": decision.statistically_significant,
                 "practically_meaningful": decision.practically_meaningful,
+                "evidence_role": "Confirmatory" if decision.confirmatory else "Exploratory",
                 "decision": decision.category.value,
             }
         )

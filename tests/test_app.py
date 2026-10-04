@@ -28,6 +28,15 @@ def test_app_renders_definition_screen_without_exception() -> None:
     assert app.get_by_key("generate_protocol_options")
 
 
+def test_app_can_open_experiment_history() -> None:
+    app = AppTest.from_file(str(APP_PATH)).run()
+
+    app.get_by_key("view_history").click().run()
+
+    assert not app.exception
+    assert any("Experiment history" in header.value for header in app.header)
+
+
 def test_app_generates_protocol_options_from_valid_form() -> None:
     app = AppTest.from_file(str(APP_PATH)).run()
 
@@ -43,6 +52,26 @@ def test_app_generates_protocol_options_from_valid_form() -> None:
     assert app.get_by_key("select_confirmatory")
     assert app.get_by_key("select_exploratory")
     assert any("operationally demanding" in warning.value for warning in app.warning)
+
+
+def test_app_keeps_exploratory_option_when_confirmatory_plan_is_too_large() -> None:
+    app = AppTest.from_file(str(APP_PATH)).run()
+
+    for key, value in {
+        "experiment_name": "High variability test",
+        "changed_variable": "Driver loft",
+        "baseline_value": "9 degrees",
+        "treatment_value": "10 degrees",
+        "primary_goal": "Increase carry",
+    }.items():
+        app.get_by_key(key).set_value(value)
+    app.get_by_key("expected_standard_deviation").set_value(100.0)
+    app.get_by_key("generate_protocol_options").click().run()
+
+    assert not app.exception
+    assert not any(button.key == "select_confirmatory" for button in app.button)
+    assert app.get_by_key("select_exploratory")
+    assert any("operational limit" in warning.value for warning in app.warning)
 
 
 def test_app_can_select_exploratory_protocol() -> None:

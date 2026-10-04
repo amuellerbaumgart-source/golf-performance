@@ -36,9 +36,17 @@ def build_metric_comparison_table(analyses: tuple[MetricAnalysis, ...]) -> pd.Da
                 "B mean": analysis.treatment.mean,
                 "B median": analysis.treatment.median,
                 "B SD": analysis.treatment.standard_deviation,
+                "Paired blocks": analysis.n_pairs,
                 "B − A": analysis.difference,
                 "% difference": analysis.percentage_difference,
                 "95% CI for B − A": confidence_interval,
+                "Bootstrap 95% CI": (
+                    f"[{analysis.bootstrap_confidence_interval_lower:.2f}, "
+                    f"{analysis.bootstrap_confidence_interval_upper:.2f}]"
+                    if analysis.bootstrap_confidence_interval_lower is not None
+                    and analysis.bootstrap_confidence_interval_upper is not None
+                    else "Unavailable"
+                ),
                 "p-value": analysis.p_value,
                 "Hedges' g": analysis.hedges_g,
             }
@@ -54,6 +62,7 @@ def build_decision_table(decision: ExperimentDecision) -> pd.DataFrame:
         rows.append(
             {
                 "Metric": metric_decision.metric_name,
+                "Evidence role": "Confirmatory" if metric_decision.confirmatory else "Exploratory",
                 "Observed improvement": metric_decision.observed_improvement,
                 "Practical threshold": metric_decision.practical_threshold,
                 "Threshold type": (
@@ -123,7 +132,7 @@ def render_analysis(experiment, recommendation, protocol, storage: FileSystemSto
         return
 
     try:
-        analyses = analyze_experiment(results, experiment)
+        analyses = analyze_experiment(results, experiment, protocol)
     except (TypeError, ValueError) as error:
         st.error(f"Analysis could not be completed: {error}")
         return

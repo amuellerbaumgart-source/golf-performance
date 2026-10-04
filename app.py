@@ -1,12 +1,13 @@
 import streamlit as st
 
-from golf_performance.domain import ExperimentStatus
 from golf_performance.storage import FileSystemStorage
 from golf_performance.ui.define_experiment import render_define_experiment
 from golf_performance.ui.data_entry import render_data_entry
 from golf_performance.ui.analysis import render_analysis
 from golf_performance.ui.protocol_review import render_protocol_review
 from golf_performance.ui.report import render_report
+from golf_performance.ui.history import render_history
+from golf_performance.ui.workflow import open_saved_experiment
 
 
 st.set_page_config(
@@ -56,6 +57,9 @@ def render_sidebar(storage: FileSystemStorage) -> None:
         if st.button("New experiment", key="new_experiment", icon=":material/add:"):
             reset_workflow()
             st.rerun()
+        if st.button("Experiment history", key="view_history", icon=":material/history:"):
+            st.session_state.workflow_step = "history"
+            st.rerun()
 
         summaries = storage.list_experiments()
         if summaries:
@@ -80,28 +84,10 @@ def render_sidebar(storage: FileSystemStorage) -> None:
                 disabled=selected_id is None,
             ):
                 try:
-                    stored = storage.load_experiment(selected_id)
+                    open_saved_experiment(storage, selected_id)
                 except (FileNotFoundError, OSError, ValueError) as error:
                     st.error(f"Could not open experiment: {error}")
                     return
-                st.session_state.experiment = stored.experiment
-                st.session_state.protocol_recommendation = stored.protocol_recommendation
-                st.session_state.selected_protocol = (
-                    stored.protocol_recommendation.selected
-                    if stored.protocol_recommendation
-                    else None
-                )
-                if not stored.protocol_recommendation:
-                    workflow_step = "define"
-                elif stored.experiment.status is ExperimentStatus.COLLECTING:
-                    workflow_step = "data_entry"
-                elif stored.experiment.status is ExperimentStatus.READY_FOR_ANALYSIS:
-                    workflow_step = "analysis"
-                elif stored.experiment.status is ExperimentStatus.ANALYZED:
-                    workflow_step = "report"
-                else:
-                    workflow_step = "protocol"
-                st.session_state.workflow_step = workflow_step
                 st.rerun()
         st.space("small")
         st.caption("One variable changes. Everything else stays as constant as reasonably possible.")
@@ -114,7 +100,9 @@ render_sidebar(storage)
 st.title("Golf performance experiments", icon=":material/sports_golf:")
 st.caption("Design a controlled A/B test for one golf variable at a time.")
 
-if st.session_state.workflow_step == "protocol":
+if st.session_state.workflow_step == "history":
+    render_history(storage)
+elif st.session_state.workflow_step == "protocol":
     render_protocol_review(
         st.session_state.experiment,
         st.session_state.protocol_recommendation,

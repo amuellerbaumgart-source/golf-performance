@@ -142,6 +142,9 @@ def test_experiment_decision_reports_secondary_tradeoffs() -> None:
     assert decision.primary.category is DecisionCategory.STRONG_MEANINGFUL_IMPROVEMENT
     assert decision.tradeoff_metric_names == ("Offline",)
     assert "tradeoff" in decision.conclusion.lower()
+    secondary_decision = next(item for item in decision.metrics if item.metric_key == "offline")
+    assert secondary_decision.confirmatory is False
+    assert any("not confirmatory" in warning for warning in secondary_decision.warnings)
 
 
 def test_experiment_decision_rejects_duplicate_analysis_records() -> None:

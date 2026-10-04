@@ -33,6 +33,10 @@ class ExperimentSummary:
     name: str
     status: ExperimentStatus
     created_at: datetime
+    changed_variable: str = ""
+    baseline_value: str = ""
+    treatment_value: str = ""
+    primary_metric_name: str = ""
 
 
 class FileSystemStorage:
@@ -132,6 +136,10 @@ class FileSystemStorage:
                         name=experiment.name,
                         status=experiment.status,
                         created_at=experiment.created_at,
+                        changed_variable=experiment.changed_variable,
+                        baseline_value=experiment.baseline_value,
+                        treatment_value=experiment.treatment_value,
+                        primary_metric_name=experiment.primary_metric.display_name,
                     )
                 )
             except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):

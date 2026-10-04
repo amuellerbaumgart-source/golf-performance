@@ -118,3 +118,19 @@ def test_percentage_option_exposes_mde_in_percentage_terms() -> None:
     )
 
     assert recommendation.exploratory.minimum_detectable_effect_percentage is not None
+
+
+def test_infeasible_confirmatory_plan_is_reported_without_crashing() -> None:
+    recommendation = generate_protocol_options(
+        experiment(),
+        expected_standard_deviation=100.0,
+        exploratory_shots_per_configuration=30,
+        block_size=5,
+    )
+
+    assert recommendation.confirmatory is None
+    assert recommendation.confirmatory_shots_required > 1000
+    assert recommendation.exploratory is not None
+    assert any("operational limit" in warning for warning in recommendation.exploratory.power_analysis.warnings)
+    with pytest.raises(ValueError, match="operational shot limit"):
+        recommendation.select(ExperimentDesignMode.CONFIRMATORY)

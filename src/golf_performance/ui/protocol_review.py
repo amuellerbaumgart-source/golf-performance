@@ -28,6 +28,11 @@ def _render_option_card(
         metrics[0].metric("Shots / configuration", protocol.shots_per_configuration)
         metrics[1].metric("Total shots", protocol.total_shots)
         metrics[2].metric("Estimated time", f"{protocol.estimated_total_minutes:.1f} min")
+        st.caption(
+            f"{protocol.blocks_per_configuration} paired A/B blocks per configuration · "
+            f"Planning block-difference SD: "
+            f"{protocol.power_analysis.expected_block_difference_standard_deviation:.2f} {experiment.primary_metric.unit}"
+        )
 
         st.metric(
             "Minimum detectable effect",
@@ -102,7 +107,20 @@ def render_protocol_review(
 
     columns = st.columns(2)
     with columns[0]:
-        _render_option_card(recommendation.confirmatory, "select_confirmatory", experiment, storage)
+        if recommendation.confirmatory is None:
+            with st.container(border=True, height="stretch"):
+                st.subheader("Confirmatory", divider="blue")
+                st.caption("The powered plan is above the operational limit.")
+                st.badge("Unavailable at this cap", icon=":material/warning:", color="orange")
+                st.warning(
+                    f"The powered recommendation requires "
+                    f"{recommendation.confirmatory_shots_required} shots per configuration, "
+                    "so choose the exploratory plan to collect a practical sample.",
+                    icon=":material/warning:",
+                )
+                st.caption("The exploratory result can show trends and large effects, but it will not provide definitive confirmation.")
+        else:
+            _render_option_card(recommendation.confirmatory, "select_confirmatory", experiment, storage)
     with columns[1]:
         _render_option_card(recommendation.exploratory, "select_exploratory", experiment, storage)
 

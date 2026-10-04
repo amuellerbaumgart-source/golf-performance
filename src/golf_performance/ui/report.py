@@ -192,9 +192,10 @@ def render_report(experiment, recommendation, protocol, storage: FileSystemStora
     with st.container(border=True):
         st.subheader("Limitations")
         st.markdown(
-            "- The current analysis treats shots as independent observations.\n"
-            "- Repeated shots from one golfer may be affected by fatigue, learning, and order effects.\n"
-            "- Secondary metrics should be treated as supporting or exploratory evidence.\n"
+            "- Primary inference uses complete paired A/B blocks rather than treating every shot as independent.\n"
+            "- Repeated shots from one golfer may still be affected by fatigue, learning, and order effects.\n"
+            "- The primary result uses paired A/B blocks; secondary metrics are exploratory evidence.\n"
+            "- Bootstrap intervals are sensitivity checks and require at least five complete block pairs.\n"
             "- Practical significance is based on the thresholds defined before data review."
         )
 

@@ -34,6 +34,7 @@ class MetricDecision:
     threshold_type: ThresholdType
     interpretation: str
     warnings: tuple[str, ...] = ()
+    confirmatory: bool = True
 
 
 @dataclass(frozen=True)
@@ -80,6 +81,7 @@ def evaluate_metric_decision(
     metric: MetricDefinition,
     *,
     alpha: float = DEFAULT_ALPHA,
+    confirmatory: bool = True,
 ) -> MetricDecision:
     """Separate statistical significance from direction-aware practical significance."""
 
@@ -92,6 +94,8 @@ def evaluate_metric_decision(
         raise ValueError("Alpha must be between zero and one")
     if analysis.metric_key != metric.key:
         raise ValueError("Analysis and metric definitions must refer to the same metric")
+    if not isinstance(confirmatory, bool):
+        raise ValueError("Confirmatory flag must be boolean")
 
     sign = _improvement_sign(metric)
     observed_improvement = analysis.difference * sign
@@ -104,6 +108,10 @@ def evaluate_metric_decision(
         analysis.p_value < alpha if analysis.p_value is not None else None
     )
     warnings: list[str] = []
+    if not confirmatory:
+        warnings.append(
+            "Secondary metric result is exploratory; its nominal p-value is not confirmatory evidence."
+        )
 
     if metric.threshold_type is ThresholdType.ABSOLUTE:
         practical_value = observed_improvement
@@ -151,7 +159,11 @@ def evaluate_metric_decision(
         observed_improvement_percentage=observed_improvement_percentage,
         practical_threshold=metric.meaningful_threshold,
         threshold_type=metric.threshold_type,
-        interpretation=_category_interpretation(
+        interpretation=(
+            "Exploratory result: "
+            if not confirmatory
+            else ""
+        ) + _category_interpretation(
             category,
             metric_name=metric.display_name,
             observed_improvement=observed_improvement,
@@ -159,6 +171,7 @@ def evaluate_metric_decision(
             threshold_type=metric.threshold_type,
         ),
         warnings=tuple(warnings),
+        confirmatory=confirmatory,
     )
 
 
@@ -178,7 +191,12 @@ def evaluate_experiment(
         raise ValueError("Analyses must contain exactly the experiment's configured metrics")
 
     metric_decisions = tuple(
-        evaluate_metric_decision(by_key[metric.key], metric, alpha=alpha)
+        evaluate_metric_decision(
+            by_key[metric.key],
+            metric,
+            alpha=alpha,
+            confirmatory=metric.key == experiment.primary_metric.key,
+        )
         for metric in experiment.metrics
     )
     primary = next(

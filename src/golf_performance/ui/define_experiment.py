@@ -117,12 +117,12 @@ def render_define_experiment(storage: FileSystemStorage) -> None:
     power_columns = st.columns(3)
     with power_columns[0]:
         expected_standard_deviation = st.number_input(
-            "Expected SD of primary analysis quantity",
+            "Expected individual-shot SD of primary metric",
             min_value=0.0001,
             value=8.0,
             step=0.5,
             key="expected_standard_deviation",
-            help="Estimate the shot-to-shot standard deviation in the transformed quantity being analyzed.",
+            help="Estimate the standard deviation of individual shots on the transformed analysis scale. The app converts this to an estimated paired block-difference SD for power planning.",
         )
     with power_columns[1]:
         exploratory_cap = st.number_input(
