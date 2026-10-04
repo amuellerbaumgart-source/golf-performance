@@ -6,6 +6,7 @@ from golf_performance.ui.define_experiment import render_define_experiment
 from golf_performance.ui.data_entry import render_data_entry
 from golf_performance.ui.analysis import render_analysis
 from golf_performance.ui.protocol_review import render_protocol_review
+from golf_performance.ui.report import render_report
 
 
 st.set_page_config(
@@ -40,6 +41,7 @@ def render_sidebar(storage: FileSystemStorage) -> None:
             ("protocol", "Choose testing plan"),
             ("data_entry", "Enter shot results"),
             ("analysis", "Analyze results"),
+            ("report", "Experiment report"),
         )
         step_order = [step_key for step_key, _ in steps]
         current_index = step_order.index(current_step) if current_step in step_order else 0
@@ -93,11 +95,10 @@ def render_sidebar(storage: FileSystemStorage) -> None:
                     workflow_step = "define"
                 elif stored.experiment.status is ExperimentStatus.COLLECTING:
                     workflow_step = "data_entry"
-                elif stored.experiment.status in {
-                    ExperimentStatus.READY_FOR_ANALYSIS,
-                    ExperimentStatus.ANALYZED,
-                }:
+                elif stored.experiment.status is ExperimentStatus.READY_FOR_ANALYSIS:
                     workflow_step = "analysis"
+                elif stored.experiment.status is ExperimentStatus.ANALYZED:
+                    workflow_step = "report"
                 else:
                     workflow_step = "protocol"
                 st.session_state.workflow_step = workflow_step
@@ -128,6 +129,13 @@ elif st.session_state.workflow_step == "data_entry":
     )
 elif st.session_state.workflow_step == "analysis":
     render_analysis(
+        st.session_state.experiment,
+        st.session_state.protocol_recommendation,
+        st.session_state.selected_protocol,
+        storage,
+    )
+elif st.session_state.workflow_step == "report":
+    render_report(
         st.session_state.experiment,
         st.session_state.protocol_recommendation,
         st.session_state.selected_protocol,

@@ -175,6 +175,14 @@ def render_analysis(experiment, recommendation, protocol, storage: FileSystemSto
             hide_index=True,
             alt="Statistical and practical significance decision by metric",
         )
+        if st.button(
+            "View experiment report",
+            type="primary",
+            icon=":material/assignment:",
+            key="view_report",
+        ):
+            st.session_state.workflow_step = "report"
+            st.rerun()
 
     warning_count = 0
     for analysis in analyses:

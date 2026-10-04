@@ -64,6 +64,12 @@ def _analysis_values(values: pd.Series, metric: MetricDefinition) -> pd.Series:
     raise ValueError(f"Unsupported analysis transform for metric {metric.key}")
 
 
+def transform_metric_values(values: pd.Series, metric: MetricDefinition) -> pd.Series:
+    """Return finite values on the same analysis scale used by the statistics engine."""
+
+    return _analysis_values(values, metric)
+
+
 def _summary(configuration: str, values: pd.Series) -> ConditionSummary:
     if values.empty:
         raise ValueError(f"Configuration {configuration} has no valid observations")

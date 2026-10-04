@@ -25,7 +25,7 @@ streamlit run app.py
 pytest
 ```
 
-The current application covers experiment definition, power-based protocol selection, local storage/resume, manual shot-level data entry, statistical analysis, and direction-aware practical-significance decisions. Visual reporting and historical player features are being developed incrementally.
+The current application covers experiment definition, power-based protocol selection, local storage/resume, manual shot-level data entry, statistical analysis, direction-aware practical-significance decisions, and an in-app experiment report with focused visualizations and CSV export. Measurement metadata, experiment history, and historical player features are being developed incrementally.
 
 ## Development principles
 

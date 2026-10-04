@@ -28,6 +28,12 @@ from .decision import (
     evaluate_experiment,
     evaluate_metric_decision,
 )
+from .reporting import (
+    ExperimentReport,
+    ReportNotReadyError,
+    build_experiment_report,
+    build_report_export,
+)
 
 __all__ = [
     "Experiment",
@@ -52,4 +58,8 @@ __all__ = [
     "ExperimentDecision",
     "evaluate_metric_decision",
     "evaluate_experiment",
+    "ExperimentReport",
+    "ReportNotReadyError",
+    "build_experiment_report",
+    "build_report_export",
 ]
