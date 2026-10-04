@@ -12,7 +12,7 @@ os.environ.setdefault("GOLF_PERFORMANCE_DATA_DIR", tempfile.mkdtemp(prefix="golf
 def test_app_supports_multiple_metrics_and_primary_metric_selection() -> None:
     app = AppTest.from_file(str(APP_PATH)).run()
 
-    app.get_by_key("selected_metrics").select(["Carry", "Offline distance"]).run()
+    app.get_by_key("selected_metrics").set_value(["Carry", "Offline distance"]).run()
     assert not app.exception
 
     app.get_by_key("primary_metric").select("Offline distance").run()
