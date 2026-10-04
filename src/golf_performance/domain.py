@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from enum import StrEnum
 from typing import Any, ClassVar
 from uuid import UUID, uuid4
@@ -111,6 +111,12 @@ class Experiment:
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     status: ExperimentStatus = ExperimentStatus.DRAFT
     schema_version: int = 1
+    session_date: str | None = None
+    session_location: str = ""
+    environment_notes: str = ""
+    equipment_notes: str = ""
+    exclusion_rules: str = ""
+    collection_notes: str = ""
 
     _ALLOWED_TRANSITIONS: ClassVar[dict[ExperimentStatus, frozenset[ExperimentStatus]]] = {
         ExperimentStatus.DRAFT: frozenset({ExperimentStatus.PROTOCOL_READY}),
@@ -157,6 +163,23 @@ class Experiment:
             raise ValueError("Unsupported schema version")
         if self.created_at.tzinfo is None or self.created_at.utcoffset() is None:
             raise ValueError("created_at must be timezone-aware")
+        if self.session_date is not None:
+            if not isinstance(self.session_date, str) or not self.session_date.strip():
+                raise ValueError("session_date must be a non-empty ISO date string")
+            try:
+                date.fromisoformat(self.session_date)
+            except ValueError as exc:
+                raise ValueError("session_date must use YYYY-MM-DD format") from exc
+        optional_text = {
+            "session_location": self.session_location,
+            "environment_notes": self.environment_notes,
+            "equipment_notes": self.equipment_notes,
+            "exclusion_rules": self.exclusion_rules,
+            "collection_notes": self.collection_notes,
+        }
+        for field_name, value in optional_text.items():
+            if not isinstance(value, str):
+                raise ValueError(f"{field_name} must be text")
 
     @property
     def primary_metric(self) -> MetricDefinition:
@@ -215,6 +238,12 @@ class Experiment:
                 created_at=datetime.fromisoformat(data["created_at"]),
                 status=ExperimentStatus(data["status"]),
                 schema_version=data.get("schema_version", 1),
+                session_date=data.get("session_date"),
+                session_location=data.get("session_location", ""),
+                environment_notes=data.get("environment_notes", ""),
+                equipment_notes=data.get("equipment_notes", ""),
+                exclusion_rules=data.get("exclusion_rules", ""),
+                collection_notes=data.get("collection_notes", ""),
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError("Invalid experiment data") from exc

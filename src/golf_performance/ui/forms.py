@@ -77,6 +77,11 @@ def build_experiment(
     treatment_value: str,
     primary_goal: str,
     metrics: list[MetricDefinition],
+    session_date: str | None = None,
+    session_location: str = "",
+    environment_notes: str = "",
+    equipment_notes: str = "",
+    exclusion_rules: str = "",
 ) -> Experiment:
     """Build the domain experiment used by the Streamlit workflow."""
 
@@ -87,4 +92,9 @@ def build_experiment(
         treatment_value=treatment_value,
         primary_goal=primary_goal,
         metrics=metrics,
+        session_date=session_date,
+        session_location=session_location,
+        environment_notes=environment_notes,
+        equipment_notes=equipment_notes,
+        exclusion_rules=exclusion_rules,
     )

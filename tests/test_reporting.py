@@ -78,3 +78,14 @@ def test_incomplete_results_cannot_build_final_report() -> None:
 
     with pytest.raises(ReportNotReadyError, match="complete shots"):
         build_experiment_report(current, protocol, results)
+
+
+def test_legacy_results_can_build_report_after_normalization() -> None:
+    current = experiment()
+    protocol = selected_protocol(current)
+    current_results = complete_results(protocol)
+    legacy_results = current_results[["shot_id", "configuration", "carry"]]
+
+    report = build_experiment_report(current, protocol, legacy_results)
+
+    assert report.total_valid_shots == protocol.total_shots

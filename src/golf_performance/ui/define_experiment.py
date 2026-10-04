@@ -35,6 +35,40 @@ def render_define_experiment(storage: FileSystemStorage) -> None:
         key="primary_goal",
     )
 
+    with st.expander("Session context (optional)", icon=":material/calendar_month:"):
+        session_date_input = st.text_input(
+            "Session date",
+            placeholder="YYYY-MM-DD",
+            key="session_date",
+            help="The date of the hitting session. Leave blank if unknown.",
+        )
+        context_columns = st.columns(2)
+        with context_columns[0]:
+            session_location = st.text_input(
+                "Location",
+                placeholder="Indoor bay or course name",
+                key="session_location",
+            )
+            equipment_notes = st.text_area(
+                "Equipment notes",
+                placeholder="Ball model, monitor, club setup",
+                height=80,
+                key="equipment_notes",
+            )
+        with context_columns[1]:
+            environment_notes = st.text_area(
+                "Environment notes",
+                placeholder="Wind, temperature, surface, interruptions",
+                height=80,
+                key="environment_notes",
+            )
+            exclusion_rules = st.text_area(
+                "Predefined exclusion rules",
+                placeholder="For example: exclude clear mishits before reviewing results",
+                height=80,
+                key="exclusion_rules",
+            )
+
     selected_metric_labels = st.pills(
         "Metrics to measure",
         options=[preset.display_name for preset in METRIC_PRESETS],
@@ -174,6 +208,11 @@ def render_define_experiment(storage: FileSystemStorage) -> None:
             treatment_value=treatment_value,
             primary_goal=primary_goal,
             metrics=metrics,
+            session_date=session_date_input.strip() or None,
+            session_location=session_location.strip(),
+            environment_notes=environment_notes.strip(),
+            equipment_notes=equipment_notes.strip(),
+            exclusion_rules=exclusion_rules.strip(),
         )
         from ..protocols import generate_protocol_options
 

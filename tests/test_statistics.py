@@ -61,6 +61,20 @@ def test_analyze_metric_reports_descriptive_and_welch_statistics() -> None:
     assert analysis.analysis_unit == ANALYSIS_UNIT
 
 
+def test_analysis_warns_when_shots_have_exclusion_notes() -> None:
+    results = pd.DataFrame(
+        {
+            "configuration": ["A"] * 4 + ["B"] * 4,
+            "exclusion_note": ["mishit", "", "", "", "", "", "", ""],
+            "carry": [100.0, 102.0, 98.0, 101.0, 105.0, 107.0, 104.0, 106.0],
+        }
+    )
+
+    analysis = analyze_metric(results, metric())
+
+    assert any("exclusion notes" in warning for warning in analysis.warnings)
+
+
 def test_current_analysis_explicitly_identifies_individual_shot_method() -> None:
     results = pd.DataFrame(
         {

@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from ..data_collection import completed_shots, validate_results
+from ..data_collection import completed_shots, normalize_saved_results, validate_results
 from ..decision import DecisionCategory, ExperimentDecision, evaluate_experiment
 from ..domain import ThresholdType
 from ..statistics import MetricAnalysis, analyze_experiment
@@ -116,6 +116,7 @@ def render_analysis(experiment, recommendation, protocol, storage: FileSystemSto
     except (FileNotFoundError, OSError, ValueError) as error:
         st.error(f"Could not load saved results: {error}")
         return
+    results = normalize_saved_results(results, protocol, [metric.key for metric in experiment.metrics])
 
     with st.container(border=True):
         st.markdown(

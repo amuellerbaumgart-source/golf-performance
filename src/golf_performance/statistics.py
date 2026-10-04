@@ -318,6 +318,13 @@ def analyze_metric(
     baseline = _analysis_values(results.loc[results["configuration"] == "A", metric.key], metric)
     treatment = _analysis_values(results.loc[results["configuration"] == "B", metric.key], metric)
     warnings: list[str] = []
+    if "exclusion_note" in results.columns:
+        note_mask = results["exclusion_note"].fillna("").astype(str).str.strip().ne("")
+        noted_shots = int(note_mask.sum())
+        if noted_shots:
+            warnings.append(
+                f"{noted_shots} shot(s) have exclusion notes; review those observations before interpreting the result."
+            )
     observed_configurations = set(results["configuration"].dropna().astype(str))
     unexpected_configurations = sorted(observed_configurations.difference({"A", "B"}))
     if unexpected_configurations:

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from .data_collection import completed_shots, validate_results
+from .data_collection import completed_shots, normalize_saved_results, validate_results
 from .decision import ExperimentDecision, evaluate_experiment
 from .domain import Experiment
 from .protocols import TestingProtocol
@@ -32,6 +32,7 @@ def build_experiment_report(
     """Build a report from complete results and existing analysis services."""
 
     metric_keys = [metric.key for metric in experiment.metrics]
+    results = normalize_saved_results(results, protocol, metric_keys)
     validation_errors = validate_results(results, protocol, metric_keys)
     if validation_errors:
         raise ReportNotReadyError("; ".join(validation_errors))

@@ -4,6 +4,7 @@ from golf_performance.data_collection import (
     build_results_template,
     completed_shots,
     merge_saved_results,
+    normalize_saved_results,
     validate_results,
 )
 from golf_performance.domain import (
@@ -48,8 +49,9 @@ def test_template_locks_protocol_rows_and_allows_blank_metrics() -> None:
     current = protocol()
     results = build_results_template(current, ["carry"])
 
-    assert list(results.columns) == ["shot_id", "configuration", "carry"]
+    assert list(results.columns) == ["shot_id", "block_id", "configuration", "exclusion_note", "carry"]
     assert len(results) == current.total_shots
+    assert results["block_id"].tolist() == [1] * 5 + [2] * 5 + [3] * 5 + [4] * 5
     assert results["configuration"].tolist() == list(current.sequence)
     assert completed_shots(results, ["carry"]) == 0
     assert validate_results(results, current, ["carry"]) == []
@@ -58,12 +60,24 @@ def test_template_locks_protocol_rows_and_allows_blank_metrics() -> None:
 def test_saved_values_are_merged_by_shot_id() -> None:
     current = protocol()
     template = build_results_template(current, ["carry"])
-    saved = pd.DataFrame({"shot_id": [2], "carry": [245.5]})
+    saved = pd.DataFrame({"shot_id": [2], "carry": [245.5], "exclusion_note": ["top edge"]})
 
     merged = merge_saved_results(template, saved)
 
     assert merged.loc[1, "carry"] == 245.5
+    assert merged.loc[1, "exclusion_note"] == "top edge"
     assert pd.isna(merged.loc[0, "carry"])
+
+
+def test_legacy_saved_results_are_normalized_to_current_schema() -> None:
+    current = protocol()
+    legacy = pd.DataFrame({"shot_id": [1], "configuration": ["B"], "carry": [245.5]})
+
+    normalized = normalize_saved_results(legacy, current, ["carry"])
+
+    assert list(normalized.columns) == ["shot_id", "block_id", "configuration", "exclusion_note", "carry"]
+    assert normalized.loc[0, "configuration"] == current.sequence[0]
+    assert normalized.loc[0, "carry"] == 245.5
 
 
 def test_results_validation_rejects_non_numeric_values() -> None:
@@ -75,6 +89,16 @@ def test_results_validation_rejects_non_numeric_values() -> None:
     errors = validate_results(results, current, ["carry"])
 
     assert any("non-numeric" in error for error in errors)
+
+
+def test_results_validation_rejects_modified_block_ids() -> None:
+    current = protocol()
+    results = build_results_template(current, ["carry"])
+    results.loc[0, "block_id"] = 99
+
+    errors = validate_results(results, current, ["carry"])
+
+    assert any("Block IDs" in error for error in errors)
 
 
 def test_complete_results_count_and_validation() -> None:

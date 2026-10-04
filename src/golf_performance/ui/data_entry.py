@@ -24,6 +24,7 @@ def _save_results(
     protocol: TestingProtocol,
     results: pd.DataFrame,
     storage: FileSystemStorage,
+    collection_notes: str,
 ) -> None:
     metric_keys = _metric_columns(experiment)
     errors = validate_results(results, protocol, metric_keys)
@@ -34,6 +35,7 @@ def _save_results(
         return
 
     try:
+        experiment.collection_notes = collection_notes.strip()
         storage.save_results(experiment.experiment_id, results)
         if experiment.status is ExperimentStatus.PROTOCOL_READY:
             experiment.transition_to(ExperimentStatus.COLLECTING)
@@ -79,10 +81,18 @@ def render_data_entry(
     with st.container(border=True):
         st.markdown(f"**{experiment.changed_variable}:** {experiment.baseline_value} (A) vs {experiment.treatment_value} (B)")
         st.caption("Blank cells are allowed while collecting. A shot is complete only when every selected metric has a finite value.")
+        st.caption("Block IDs and configurations are locked. Add an exclusion note when a shot is affected by a predefined rule, mishit, interruption, or unusual condition.")
+        if experiment.exclusion_rules:
+            st.info(f"Predefined exclusion rules: {experiment.exclusion_rules}", icon=":material/rule:")
 
     column_config = {
         "shot_id": st.column_config.NumberColumn("Shot", disabled=True, pinned=True, format="%d"),
+        "block_id": st.column_config.NumberColumn("Block", disabled=True, pinned=True, format="%d"),
         "configuration": st.column_config.TextColumn("Configuration", disabled=True, pinned=True),
+        "exclusion_note": st.column_config.TextColumn(
+            "Exclusion note",
+            help="Optional context for an excluded or unusual shot.",
+        ),
     }
     for metric in experiment.metrics:
         column_config[metric.key] = st.column_config.NumberColumn(
@@ -98,15 +108,22 @@ def render_data_entry(
         width="stretch",
         hide_index=True,
         num_rows="fixed",
-        disabled=["shot_id", "configuration"],
+        disabled=["shot_id", "block_id", "configuration"],
         column_config=column_config,
     )
 
+    collection_notes = st.text_area(
+        "Collection notes",
+        value=experiment.collection_notes,
+        placeholder="Record fatigue, interruptions, weather changes, or order concerns.",
+        height=80,
+        key=f"collection_notes_{experiment.experiment_id}",
+    )
     with st.container(horizontal=True, horizontal_alignment="left"):
         save = st.button("Save progress", type="primary", icon=":material/save:", key="save_results")
         back = st.button("Back to protocol", icon=":material/arrow_back:", key="back_to_protocol")
     if save:
-        _save_results(experiment, recommendation, protocol, edited_results, storage)
+        _save_results(experiment, recommendation, protocol, edited_results, storage, collection_notes)
     if back:
         st.session_state.workflow_step = "protocol"
         st.rerun()

@@ -11,7 +11,7 @@ from .protocols import TestingProtocol
 def results_columns(protocol: TestingProtocol, metric_keys: Sequence[str]) -> list[str]:
     """Return the stable column order used by the shot-entry table."""
 
-    return ["shot_id", "configuration", *metric_keys]
+    return ["shot_id", "block_id", "configuration", "exclusion_note", *metric_keys]
 
 
 def build_results_template(
@@ -23,7 +23,12 @@ def build_results_template(
     columns = results_columns(protocol, metric_keys)
     data: dict[str, object] = {
         "shot_id": pd.Series(range(1, protocol.total_shots + 1), dtype="int64"),
+        "block_id": pd.Series(
+            [shot_index // protocol.block_size + 1 for shot_index in range(protocol.total_shots)],
+            dtype="int64",
+        ),
         "configuration": pd.Series(protocol.sequence, dtype="string"),
+        "exclusion_note": pd.Series([""] * protocol.total_shots, dtype="string"),
     }
     data.update({key: pd.Series([float("nan")] * protocol.total_shots, dtype="float64") for key in metric_keys})
     return pd.DataFrame(data, columns=columns)
@@ -47,12 +52,31 @@ def merge_saved_results(
     saved = saved.drop_duplicates(subset=["shot_id"], keep="last")
 
     for column in template.columns:
-        if column in {"shot_id", "configuration"} or column not in saved.columns:
+        if column in {"shot_id", "block_id", "configuration"} or column not in saved.columns:
             continue
-        values = pd.to_numeric(saved.set_index("shot_id")[column], errors="coerce")
-        merged[column] = merged["shot_id"].map(values).astype("float64")
+        values = saved.set_index("shot_id")[column]
+        if column == "exclusion_note":
+            merged[column] = merged["shot_id"].map(values).fillna("").astype("string")
+        else:
+            numeric_values = pd.to_numeric(values, errors="coerce")
+            merged[column] = merged["shot_id"].map(numeric_values).astype("float64")
 
     return merged
+
+
+def normalize_saved_results(
+    saved_results: pd.DataFrame,
+    protocol: TestingProtocol,
+    metric_keys: Sequence[str],
+) -> pd.DataFrame:
+    """Return saved data on the current protocol schema.
+
+    Older experiments may not have the locked ``block_id`` or exclusion-note
+    columns. Rebuilding the template preserves their measured values while
+    deriving protocol metadata from the currently selected protocol.
+    """
+
+    return merge_saved_results(build_results_template(protocol, metric_keys), saved_results)
 
 
 def validate_results(
@@ -82,6 +106,17 @@ def validate_results(
     configurations = results["configuration"].astype("string").tolist()
     if configurations != list(protocol.sequence):
         errors.append("Configuration assignments must match the locked A/B protocol sequence.")
+
+    expected_block_ids = [
+        shot_index // protocol.block_size + 1 for shot_index in range(protocol.total_shots)
+    ]
+    block_ids = pd.to_numeric(results["block_id"], errors="coerce")
+    if block_ids.astype("Int64").tolist() != expected_block_ids:
+        errors.append("Block IDs must match the locked protocol block structure.")
+
+    notes = results["exclusion_note"].fillna("").astype("string")
+    if notes.isna().any():
+        errors.append("Exclusion notes must be text when provided.")
 
     for metric_key in metric_keys:
         raw_values = results[metric_key]

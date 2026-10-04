@@ -142,6 +142,25 @@ def render_report(experiment, recommendation, protocol, storage: FileSystemStora
             f"{report.protocol.label} protocol · {report.total_valid_shots} valid shots · "
             f"{report.protocol.shots_per_configuration} per configuration"
         )
+        context_lines = []
+        if report.experiment.session_date:
+            context_lines.append(f"Session date: {report.experiment.session_date}")
+        if report.experiment.session_location:
+            context_lines.append(f"Location: {report.experiment.session_location}")
+        if context_lines:
+            st.caption(" · ".join(context_lines))
+        if report.experiment.equipment_notes or report.experiment.environment_notes:
+            with st.expander("Session context", icon=":material/event_note:"):
+                if report.experiment.equipment_notes:
+                    st.markdown(f"**Equipment:** {report.experiment.equipment_notes}")
+                if report.experiment.environment_notes:
+                    st.markdown(f"**Environment:** {report.experiment.environment_notes}")
+        if report.experiment.exclusion_rules or report.experiment.collection_notes:
+            with st.expander("Collection notes and exclusion rules", icon=":material/notes:"):
+                if report.experiment.exclusion_rules:
+                    st.markdown(f"**Predefined exclusion rules:** {report.experiment.exclusion_rules}")
+                if report.experiment.collection_notes:
+                    st.markdown(f"**Collection notes:** {report.experiment.collection_notes}")
 
     with st.container(border=True):
         st.subheader("Conclusion", icon=":material/flag:")

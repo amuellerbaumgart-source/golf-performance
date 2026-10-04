@@ -131,6 +131,10 @@ def render_protocol_review(
         sequence_frame = pd.DataFrame(
             {
                 "shot_number": range(1, selected.total_shots + 1),
+                "block_id": [
+                    (shot_number - 1) // selected.block_size + 1
+                    for shot_number in range(1, selected.total_shots + 1)
+                ],
                 "configuration": selected.sequence,
             }
         )
@@ -140,7 +144,7 @@ def render_protocol_review(
             hide_index=True,
             height=min(420, 36 + selected.total_shots * 35),
         )
-        st.caption("The selected sequence will drive the future shot-entry table.")
+        st.caption("The selected sequence and block IDs will drive the future shot-entry table.")
         if st.button("Continue to shot entry", type="primary", icon=":material/edit_note:", key="continue_to_data_entry"):
             st.session_state.workflow_step = "data_entry"
             st.rerun()

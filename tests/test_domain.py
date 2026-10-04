@@ -100,11 +100,26 @@ def test_target_metric_requires_target_value() -> None:
 
 
 def test_experiment_serialization_round_trip() -> None:
-    original = valid_experiment()
+    original = Experiment(
+        **{
+            **valid_experiment().__dict__,
+            "session_date": "2026-02-03",
+            "session_location": "Indoor bay",
+            "environment_notes": "No wind",
+            "equipment_notes": "Premium ball",
+            "exclusion_rules": "Exclude obvious mishits",
+            "collection_notes": "Slight fatigue late in session",
+        }
+    )
 
     restored = Experiment.from_dict(original.to_dict())
 
     assert restored.to_dict() == original.to_dict()
+
+
+def test_invalid_session_date_is_rejected() -> None:
+    with pytest.raises(ValueError, match="YYYY-MM-DD"):
+        Experiment(**{**valid_experiment().__dict__, "session_date": "03/02/2026"})
 
 
 def test_percentage_threshold_is_supported() -> None:
