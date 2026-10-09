@@ -148,16 +148,29 @@ def render_define_experiment(storage: FileSystemStorage) -> None:
 
     st.subheader("Testing assumptions")
     st.caption("These assumptions determine how much data the app recommends collecting.")
+    variability_source = st.selectbox(
+        "Variability for power planning",
+        ["Approximate from individual shots", "Use pilot paired-block differences"],
+        key="planning_variability_source",
+    )
+    expected_standard_deviation = None
+    expected_block_difference_standard_deviation = None
     power_columns = st.columns(3)
     with power_columns[0]:
-        expected_standard_deviation = st.number_input(
-            "Expected individual-shot SD of primary metric",
-            min_value=0.0001,
-            value=8.0,
-            step=0.5,
-            key="expected_standard_deviation",
-            help="Estimate the standard deviation of individual shots on the transformed analysis scale. The app converts this to an estimated paired block-difference SD for power planning.",
-        )
+        if variability_source == "Use pilot paired-block differences":
+            expected_block_difference_standard_deviation = st.number_input(
+                "Pilot SD of paired block differences",
+                min_value=0.0001, value=5.0, step=0.5, key="pilot_block_sd",
+                help="For each pair in a separate pilot, subtract the A-block mean from the B-block mean. Enter the sample SD of those differences, in the metric's units on its analysis scale. Use the same block size, order design, and comparable conditions. This is SD, not standard error.",
+            )
+            st.caption("A small pilot gives an uncertain SD. Compare plans using a larger SD as a sensitivity check.")
+        else:
+            expected_standard_deviation = st.number_input(
+                "Expected individual-shot SD of primary metric",
+                min_value=0.0001, value=8.0, step=0.5, key="expected_standard_deviation",
+                help="SD on the transformed analysis scale. Conversion assumes equal A/B variability, independent shots within blocks, and zero covariance between paired block means.",
+            )
+            st.caption("Approximation only: actual paired-block variability can be higher or lower. Prefer comparable pilot differences when available.")
     with power_columns[1]:
         exploratory_cap = st.number_input(
             "Exploratory shots per configuration",
@@ -218,7 +231,8 @@ def render_define_experiment(storage: FileSystemStorage) -> None:
 
         recommendation = generate_protocol_options(
             experiment,
-            expected_standard_deviation=float(expected_standard_deviation),
+            expected_standard_deviation=expected_standard_deviation,
+            expected_block_difference_standard_deviation=expected_block_difference_standard_deviation,
             exploratory_shots_per_configuration=int(exploratory_cap),
             block_size=int(block_size),
             seconds_per_shot=float(seconds_per_shot),

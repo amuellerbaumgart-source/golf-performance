@@ -43,7 +43,7 @@ def build_experiment_report(
         )
 
     analyses = analyze_experiment(results, experiment, protocol)
-    decision = evaluate_experiment(analyses, experiment)
+    decision = evaluate_experiment(analyses, experiment, design_mode=protocol.design_mode, alpha=protocol.power_analysis.alpha)
     return ExperimentReport(
         experiment=experiment,
         protocol=protocol,
@@ -76,6 +76,8 @@ def build_report_export(report: ExperimentReport) -> pd.DataFrame:
                 "treatment_n": analysis.treatment.n,
                 "analysis_unit": analysis.analysis_unit,
                 "statistical_method": analysis.statistical_method,
+                "primary_planning_variability_source": report.protocol.power_analysis.variability_source,
+                "primary_planning_block_difference_sd": report.protocol.power_analysis.expected_block_difference_standard_deviation,
                 "paired_block_count": analysis.n_pairs,
                 "baseline_mean": analysis.baseline.mean,
                 "treatment_mean": analysis.treatment.mean,
@@ -91,8 +93,13 @@ def build_report_export(report: ExperimentReport) -> pd.DataFrame:
                 "threshold_type": decision.threshold_type.value,
                 "statistically_significant": decision.statistically_significant,
                 "practically_meaningful": decision.practically_meaningful,
+                "observed_estimate_meets_threshold": decision.practically_meaningful,
+                "interpretation": decision.interpretation,
                 "evidence_role": "Confirmatory" if decision.confirmatory else "Exploratory",
                 "decision": decision.category.value,
+                "decision_label": decision.label,
+                "analysis_warnings": " | ".join(analysis.warnings),
+                "protocol_order_method": report.protocol.order_method,
             }
         )
     return pd.DataFrame(rows)

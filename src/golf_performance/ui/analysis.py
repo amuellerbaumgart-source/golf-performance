@@ -5,7 +5,7 @@ import streamlit as st
 
 from ..data_collection import completed_shots, normalize_saved_results, validate_results
 from ..decision import DecisionCategory, ExperimentDecision, evaluate_experiment
-from ..domain import ThresholdType
+from ..domain import MetricDirection, ThresholdType
 from ..statistics import MetricAnalysis, analyze_experiment
 from ..storage import FileSystemStorage
 
@@ -73,12 +73,12 @@ def build_decision_table(decision: ExperimentDecision) -> pd.DataFrame:
                     else "No" if metric_decision.statistically_significant is False
                     else "Unavailable"
                 ),
-                "Practically meaningful": (
+                "Observed estimate meets threshold": (
                     "Yes" if metric_decision.practically_meaningful is True
                     else "No" if metric_decision.practically_meaningful is False
                     else "Unavailable"
                 ),
-                "Decision": metric_decision.category.value.replace("_", " ").title(),
+                "Decision": metric_decision.label,
             }
         )
     return pd.DataFrame(rows)
@@ -138,74 +138,91 @@ def render_analysis(experiment, recommendation, protocol, storage: FileSystemSto
         st.error(f"Analysis could not be completed: {error}")
         return
 
-    decision = evaluate_experiment(analyses, experiment)
+    decision = evaluate_experiment(analyses, experiment, design_mode=protocol.design_mode, alpha=protocol.power_analysis.alpha)
 
     primary_analysis = next(
         analysis for analysis in analyses if analysis.metric_key == experiment.primary_metric.key
     )
+    primary = decision.primary
+    metric = experiment.primary_metric
+    st.subheader(f"Your result · {primary_analysis.metric_name}")
+    st.badge(
+        "Confirmatory primary result" if primary.confirmatory else "Exploratory result",
+        icon=":material/science:", color="blue" if primary.confirmatory else "orange",
+    )
+    if not primary.confirmatory:
+        st.info("Use this experiment to identify promising changes and plan a follow-up test. All results from this plan are exploratory.")
+    if primary.category is DecisionCategory.POTENTIALLY_DETRIMENTAL:
+        st.error(decision.conclusion)
+    elif primary.category is DecisionCategory.STRONG_MEANINGFUL_IMPROVEMENT and primary.confirmatory:
+        st.success(decision.conclusion)
+    else:
+        st.info(decision.conclusion)
+
+    threshold_unit = "%" if metric.threshold_type is ThresholdType.PERCENTAGE else primary_analysis.unit
     with st.container(horizontal=True):
-        st.metric("Valid shots", sum(analysis.baseline.n + analysis.treatment.n for analysis in analyses[:1]))
-        st.metric(
-            f"Primary change ({primary_analysis.unit})",
-            f"{primary_analysis.difference:+.2f}",
-            delta_description="Treatment B minus baseline A",
-        )
-        st.metric(
-            "Primary p-value",
-            f"{primary_analysis.p_value:.4g}"
-            if primary_analysis.p_value is not None
-            else "Unavailable",
-        )
+        st.metric("Observed improvement", f"{primary.observed_improvement:+.2f} {primary_analysis.unit}",
+                  border=True, help="Positive favors B; negative favors A. Target metrics compare distance from the target.")
+        st.metric("Your worthwhile improvement", f"{metric.meaningful_threshold:g} {threshold_unit}", border=True)
+        st.metric("Complete block pairs", str(primary_analysis.n_pairs), border=True,
+                  help="The number of paired comparisons used to estimate uncertainty.")
 
-    with st.container(border=True):
-        st.subheader("Metric comparison")
-        st.dataframe(
-            build_metric_comparison_table(analyses),
-            width="stretch",
-            hide_index=True,
-            alt="Baseline and treatment statistical comparison by metric",
-        )
-
-    with st.container(border=True):
-        st.subheader("Decision summary", icon=":material/flag:")
-        if decision.primary.category is DecisionCategory.STRONG_MEANINGFUL_IMPROVEMENT:
-            st.success(decision.conclusion)
-        elif decision.primary.category in {
-            DecisionCategory.PROMISING_BUT_UNCERTAIN,
-            DecisionCategory.MEASURABLE_NOT_PRACTICALLY_MEANINGFUL,
-        }:
-            st.warning(decision.conclusion)
-        elif decision.primary.category is DecisionCategory.POTENTIALLY_DETRIMENTAL:
-            st.error(decision.conclusion)
+    left, right = st.columns(2)
+    with left.container(border=True):
+        st.subheader("How certain is the change?", icon=":material/query_stats:")
+        lo, hi = primary_analysis.confidence_interval_lower, primary_analysis.confidence_interval_upper
+        if lo is not None and hi is not None:
+            if metric.direction is not MetricDirection.HIGHER:
+                lo, hi = -hi, -lo
+            st.metric("95% interval for improvement", f"{lo:+.2f} to {hi:+.2f} {primary_analysis.unit}")
+            st.caption("Positive values favor B. An interval crossing zero leaves both improvement and deterioration plausible. A narrower interval means a more precise estimate.")
         else:
-            st.info(decision.conclusion)
-        st.dataframe(
-            build_decision_table(decision),
-            width="stretch",
-            hide_index=True,
-            alt="Statistical and practical significance decision by metric",
-        )
-        if st.button(
-            "View experiment report",
-            type="primary",
-            icon=":material/assignment:",
-            key="view_report",
-        ):
+            st.write("An uncertainty interval is unavailable.")
+            st.caption("Review the analysis notes before drawing a conclusion.")
+        if primary_analysis.p_value is not None:
+            st.caption(f"p-value: {primary_analysis.p_value:.4g} · significance cutoff: {protocol.power_analysis.alpha:g}. This tests zero change, not your practical threshold.")
+    with right.container(border=True):
+        st.subheader("Is it large enough to matter?", icon=":material/flag:")
+        st.write("The observed estimate meets your threshold." if primary.practically_meaningful is True
+                 else "The observed estimate is below your threshold." if primary.practically_meaningful is False
+                 else "The practical comparison is unavailable.")
+        if metric.threshold_type is ThresholdType.PERCENTAGE and primary.observed_improvement_percentage is not None:
+            st.write(f"Observed improvement: {primary.observed_improvement_percentage:+.2f}% · goal: {metric.meaningful_threshold:g}%")
+        st.caption("This compares your goal with the estimate. It does not establish that the true improvement exceeds your goal.")
+        st.write(f"A average: {primary_analysis.baseline.mean:.2f} {primary_analysis.unit}")
+        st.write(f"B average: {primary_analysis.treatment.mean:.2f} {primary_analysis.unit}")
+        st.caption(f"Measured as {primary_analysis.analysis_basis}.")
+
+    secondary = tuple(item for item in analyses if item.metric_key != metric.key)
+    if secondary:
+        st.subheader("Other metrics & tradeoffs")
+        st.caption("These results are exploratory, even in a confirmatory plan.")
+        for item in secondary:
+            item_decision = next(d for d in decision.metrics if d.metric_key == item.metric_key)
+            with st.expander(item.metric_name):
+                st.write(item_decision.interpretation)
+                st.metric("Observed improvement", f"{item_decision.observed_improvement:+.2f} {item.unit}")
+
+    with st.expander("Full statistical details", icon=":material/table_chart:"):
+        st.caption("The tables retain B − A signs. For lower-is-better metrics, a negative difference is an improvement.")
+        st.caption("Baseline and treatment statistics with confidence intervals")
+        st.dataframe(build_metric_comparison_table(analyses), width="stretch", hide_index=True)
+        st.caption("Evidence roles and observed practical threshold comparisons")
+        st.dataframe(build_decision_table(decision), width="stretch", hide_index=True)
+
+    notes = list(dict.fromkeys(
+        f"{item.metric_name}: {warning}"
+        for item in analyses for warning in item.warnings
+    ))
+    if notes:
+        with st.expander(f"Analysis notes ({len(notes)})", icon=":material/info:"):
+            for note in notes:
+                st.write(note)
+
+    with st.container(horizontal=True):
+        if st.button("View experiment report", type="primary", icon=":material/assignment:", key="view_report"):
             st.session_state.workflow_step = "report"
             st.rerun()
-
-    warning_count = 0
-    for analysis in analyses:
-        if not analysis.warnings:
-            continue
-        with st.expander(f"Analysis notes · {analysis.metric_name}", icon=":material/info:"):
-            for warning in analysis.warnings:
-                st.warning(warning, icon=":material/warning:")
-                warning_count += 1
-    if warning_count == 0:
-        st.success("No statistical warnings were generated for the selected metrics.")
-
-    with st.container(horizontal=True, horizontal_alignment="left"):
         if st.button("Back to shot entry", icon=":material/arrow_back:", key="analysis_back"):
             st.session_state.workflow_step = "data_entry"
             st.rerun()

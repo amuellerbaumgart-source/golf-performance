@@ -66,7 +66,9 @@ def test_complete_experiment_builds_report_and_export() -> None:
     assert list(export["metric"]) == ["Carry"]
     assert export.loc[0, "protocol_mode"] == "Exploratory"
     assert "decision" in export.columns
-    assert export.loc[0, "evidence_role"] == "Confirmatory"
+    assert export.loc[0, "evidence_role"] == "Exploratory"
+    assert report.decision.primary.confirmatory is False
+    assert report.decision.conclusion.startswith("Exploratory result:")
     assert "bootstrap_confidence_interval_lower" in export.columns
 
 
@@ -89,3 +91,23 @@ def test_legacy_results_can_build_report_after_normalization() -> None:
     report = build_experiment_report(current, protocol, legacy_results)
 
     assert report.total_valid_shots == protocol.total_shots
+
+
+def test_two_pair_report_exports_missing_effect_size_and_warning() -> None:
+    current = experiment()
+    protocol = selected_protocol(current)
+    results = complete_results(protocol)
+    for i, configuration in enumerate(protocol.sequence):
+        results.loc[i, "carry"] = 200 + ((2 if i < 10 else 4) if configuration == "B" else 0)
+    report = build_experiment_report(current, protocol, results)
+    analysis = report.analyses[0]
+    assert analysis.n_pairs == 2
+    assert analysis.hedges_g is None
+    assert analysis.p_value is not None
+    assert analysis.confidence_interval_lower is not None
+    assert any("at least three" in warning for warning in analysis.warnings)
+    export = build_report_export(report)
+    assert pd.isna(export.loc[0, "hedges_g"])
+    assert "at least three" in export.loc[0, "analysis_warnings"]
+    assert export.loc[0, "decision_label"] == report.decision.primary.label
+    assert export.loc[0, "protocol_order_method"] == protocol.order_method

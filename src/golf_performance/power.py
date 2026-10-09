@@ -21,7 +21,7 @@ class PowerAnalysis:
     """Sample-size recommendation for an experiment's primary metric."""
 
     expected_effect: float
-    expected_standard_deviation: float
+    expected_standard_deviation: float | None
     standardized_effect: float
     raw_shots_per_configuration: float
     recommended_shots_per_configuration: int
@@ -33,6 +33,7 @@ class PowerAnalysis:
     warnings: tuple[str, ...] = ()
     method: str = POWER_METHOD
     expected_block_difference_standard_deviation: float | None = None
+    variability_source: str = "shot_sd_approximation"
     raw_block_pairs: float | None = None
     recommended_block_pairs: int | None = None
 
@@ -50,6 +51,7 @@ class PowerAnalysis:
             "achieved_power": self.achieved_power,
             "warnings": list(self.warnings),
             "method": self.method,
+            "variability_source": self.variability_source,
             "expected_block_difference_standard_deviation": self.expected_block_difference_standard_deviation,
             "raw_block_pairs": self.raw_block_pairs,
             "recommended_block_pairs": self.recommended_block_pairs,
@@ -60,9 +62,14 @@ class PowerAnalysis:
         block_size = int(data["block_size"])
         recommended_shots = int(data["recommended_shots_per_configuration"])
         method = str(data.get("method", LEGACY_POWER_METHOD))
-        expected_standard_deviation = float(data["expected_standard_deviation"])
+        expected_standard_deviation = (
+            float(data["expected_standard_deviation"])
+            if data.get("expected_standard_deviation") is not None else None
+        )
         expected_block_sd = data.get("expected_block_difference_standard_deviation")
         if expected_block_sd is None:
+            if expected_standard_deviation is None:
+                raise ValueError("A planning SD is required")
             expected_block_sd = (
                 expected_standard_deviation * math.sqrt(2 / block_size)
                 if method == POWER_METHOD
@@ -88,6 +95,7 @@ class PowerAnalysis:
             achieved_power=float(data["achieved_power"]),
             warnings=tuple(str(item) for item in data.get("warnings", [])),
             method=method,
+            variability_source=str(data.get("variability_source", "shot_sd_approximation")),
             expected_block_difference_standard_deviation=float(expected_block_sd),
             raw_block_pairs=float(raw_block_pairs),
             recommended_block_pairs=int(recommended_block_pairs),
@@ -96,7 +104,6 @@ class PowerAnalysis:
     def __post_init__(self) -> None:
         numeric_fields = (
             self.expected_effect,
-            self.expected_standard_deviation,
             self.standardized_effect,
             self.raw_shots_per_configuration,
             self.alpha,
@@ -112,11 +119,14 @@ class PowerAnalysis:
             raise ValueError("Power-analysis numeric fields must be finite numbers")
         if self.expected_effect <= 0:
             raise ValueError("Expected effect must be greater than zero")
-        if (
-            not math.isfinite(self.expected_standard_deviation)
-            or self.expected_standard_deviation <= 0
-        ):
-            raise ValueError("Expected standard deviation must be greater than zero")
+        if self.variability_source not in {"shot_sd_approximation", "pilot_block_difference_sd"}:
+            raise ValueError("Unknown variability source")
+        if self.expected_standard_deviation is not None:
+            _validate_sd(self.expected_standard_deviation, "Expected shot SD")
+        if self.variability_source == "shot_sd_approximation" and self.expected_standard_deviation is None:
+            raise ValueError("Expected shot SD is required for the approximation")
+        if self.variability_source == "pilot_block_difference_sd" and self.expected_block_difference_standard_deviation is None:
+            raise ValueError("Pilot block-difference SD is required")
         if not math.isfinite(self.standardized_effect) or self.standardized_effect <= 0:
             raise ValueError("Standardized effect must be greater than zero")
         if (
@@ -216,8 +226,8 @@ def estimate_block_difference_standard_deviation(
 ) -> float:
     """Estimate SD of a paired block difference from individual-shot SD.
 
-    This planning approximation assumes equal A/B variability and roughly
-    independent shots within each block.
+    This approximation assumes equal A/B shot variance, independent shots
+    within each block, and zero covariance between paired block means.
     """
 
     if (
@@ -232,10 +242,29 @@ def estimate_block_difference_standard_deviation(
     return float(expected_shot_standard_deviation * math.sqrt(2 / block_size))
 
 
+def _validate_sd(value: float, name: str) -> None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{name} must be positive and finite")
+
+
+def _planning_sd(shot_sd: float | None, block_sd: float | None, block_size: int) -> float:
+    if isinstance(block_size, bool) or not isinstance(block_size, int) or block_size <= 0:
+        raise ValueError("Block size must be a positive integer")
+    if shot_sd is not None:
+        _validate_sd(shot_sd, "Expected shot SD")
+    if block_sd is not None:
+        _validate_sd(block_sd, "Pilot block-difference SD")
+        return float(block_sd)
+    if shot_sd is None:
+        raise ValueError("Provide an expected shot SD or a pilot block-difference SD")
+    return estimate_block_difference_standard_deviation(shot_sd, block_size)
+
+
 def calculate_power_analysis(
     metric: MetricDefinition,
     *,
-    expected_standard_deviation: float,
+    expected_standard_deviation: float | None = None,
+    expected_block_difference_standard_deviation: float | None = None,
     expected_baseline_mean: float | None = None,
     alpha: float = DEFAULT_ALPHA,
     target_power: float = DEFAULT_TARGET_POWER,
@@ -243,18 +272,15 @@ def calculate_power_analysis(
 ) -> PowerAnalysis:
     """Estimate paired A/B block sample sizes for a metric.
 
-    The user-provided SD is an individual-shot planning estimate. It is
-    converted to an estimated SD of paired block differences, then a paired
-    one-sample t power model is used.
+    Use a directly supplied pilot block-difference SD when available.
+    Otherwise approximate it from shot SD. Both paths use a one-sample
+    t power model on independent paired differences.
     """
 
-    if (
-        isinstance(expected_standard_deviation, bool)
-        or not isinstance(expected_standard_deviation, (int, float))
-        or not math.isfinite(expected_standard_deviation)
-        or expected_standard_deviation <= 0
-    ):
-        raise ValueError("Expected standard deviation must be finite and greater than zero")
+    block_difference_sd = _planning_sd(
+        expected_standard_deviation, expected_block_difference_standard_deviation, block_size
+    )
+
     if (
         isinstance(alpha, bool)
         or not isinstance(alpha, (int, float))
@@ -276,11 +302,7 @@ def calculate_power_analysis(
         metric,
         expected_baseline_mean=expected_baseline_mean,
     )
-    expected_block_difference_standard_deviation = estimate_block_difference_standard_deviation(
-        expected_standard_deviation,
-        block_size,
-    )
-    standardized_effect = effect / expected_block_difference_standard_deviation
+    standardized_effect = effect / block_difference_sd
     raw_block_pairs = float(
         TTestPower().solve_power(
             effect_size=standardized_effect,
@@ -302,10 +324,23 @@ def calculate_power_analysis(
             alternative="two-sided",
         )
     )
+    source = ("pilot_block_difference_sd" if expected_block_difference_standard_deviation is not None
+              else "shot_sd_approximation")
     warnings = [
-        "Power analysis is an estimate, not a guarantee. It uses paired A/B blocks as the inferential unit."
-        " The shot-SD-to-block-SD conversion assumes roughly independent shots within each block."
+        "Power is conditional on the assumed effect and SD, not a guarantee. Paired differences must be independent across pairs."
     ]
+    if source == "shot_sd_approximation":
+        warnings.append(
+            "Planning approximation: shot SD × sqrt(2 / block size) assumes equal A/B shot variance, "
+            "independent shots within blocks, and zero covariance between paired A/B block means. "
+            "Actual block-difference SD may be higher or lower; use comparable pilot block differences when available."
+        )
+    else:
+        warnings.append(
+            "Pilot-based planning: use the sample SD of B-block mean minus A-block mean from a separate pilot "
+            "with the same block size, order design, metric transform, and comparable conditions. A small pilot gives an uncertain SD; "
+            "check a larger SD before committing to the plan."
+        )
     if recommended_shots > SOFT_SHOT_WARNING_LIMIT:
         warnings.append(
             f"This plan requires more than {SOFT_SHOT_WARNING_LIMIT} valid shots per configuration and may be operationally demanding."
@@ -327,7 +362,8 @@ def calculate_power_analysis(
         achieved_power=achieved_power,
         warnings=tuple(warnings),
         method=POWER_METHOD,
-        expected_block_difference_standard_deviation=expected_block_difference_standard_deviation,
+        expected_block_difference_standard_deviation=block_difference_sd,
+        variability_source=source,
         raw_block_pairs=raw_block_pairs,
         recommended_block_pairs=recommended_block_pairs,
     )
@@ -335,7 +371,8 @@ def calculate_power_analysis(
 
 def calculate_minimum_detectable_effect(
     *,
-    expected_standard_deviation: float,
+    expected_standard_deviation: float | None = None,
+    expected_block_difference_standard_deviation: float | None = None,
     shots_per_configuration: int,
     block_size: int = 5,
     alpha: float = DEFAULT_ALPHA,
@@ -343,13 +380,10 @@ def calculate_minimum_detectable_effect(
 ) -> float:
     """Calculate the smallest absolute effect detectable at a sample size."""
 
-    if (
-        isinstance(expected_standard_deviation, bool)
-        or not isinstance(expected_standard_deviation, (int, float))
-        or not math.isfinite(expected_standard_deviation)
-        or expected_standard_deviation <= 0
-    ):
-        raise ValueError("Expected standard deviation must be finite and greater than zero")
+    block_difference_sd = _planning_sd(
+        expected_standard_deviation, expected_block_difference_standard_deviation, block_size
+    )
+
     if (
         isinstance(shots_per_configuration, bool)
         or not isinstance(shots_per_configuration, int)
@@ -378,10 +412,6 @@ def calculate_minimum_detectable_effect(
     block_pairs = shots_per_configuration // block_size
     if block_pairs < 2:
         raise ValueError("At least two paired blocks per configuration are required")
-    block_difference_standard_deviation = estimate_block_difference_standard_deviation(
-        expected_standard_deviation,
-        block_size,
-    )
     standardized_effect = float(
         TTestPower().solve_power(
             effect_size=None,
@@ -393,4 +423,4 @@ def calculate_minimum_detectable_effect(
     )
     if not math.isfinite(standardized_effect) or standardized_effect <= 0:
         raise ValueError("Minimum detectable effect could not be calculated")
-    return standardized_effect * block_difference_standard_deviation
+    return standardized_effect * block_difference_sd

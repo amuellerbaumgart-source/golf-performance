@@ -175,3 +175,80 @@ def test_metric_decision_rejects_invalid_alpha() -> None:
 
     with pytest.raises(ValueError, match="Alpha"):
         evaluate_metric_decision(analysis, metric, alpha=True)
+
+
+@pytest.mark.parametrize("direction", [MetricDirection.HIGHER, MetricDirection.LOWER])
+@pytest.mark.parametrize("threshold_type", [ThresholdType.ABSOLUTE, ThresholdType.PERCENTAGE])
+def test_significant_estimate_does_not_claim_true_effect_exceeds_threshold(
+    direction: MetricDirection, threshold_type: ThresholdType,
+) -> None:
+    from golf_performance.data_collection import build_results_template
+    from golf_performance.protocols import generate_protocol_options
+    from golf_performance.reporting import build_experiment_report, build_report_export
+    from golf_performance.ui.analysis import build_decision_table
+
+    metric = build_metric(direction=direction, threshold_type=threshold_type)
+    experiment = build_experiment(metric)
+    protocol = generate_protocol_options(
+        experiment, expected_standard_deviation=8,
+        expected_baseline_mean=100, exploratory_shots_per_configuration=30,
+    ).exploratory
+    results = build_results_template(protocol, [metric.key])
+    differences = [0, 2, 3, 4, 5, 7]
+    sign = 1 if direction is MetricDirection.HIGHER else -1
+    results[metric.key] = [
+        100 + (sign * differences[i // 10] if configuration == "B" else 0)
+        for i, configuration in enumerate(protocol.sequence)
+    ]
+    report = build_experiment_report(experiment, protocol, results)
+    analysis = report.analyses[0]
+    decision = report.decision.primary
+    assert decision.observed_improvement == pytest.approx(3.5)
+    assert analysis.p_value == pytest.approx(0.01674803214439739)
+    lower_improvement = (
+        analysis.confidence_interval_lower if sign == 1
+        else -analysis.confidence_interval_upper
+    )
+    assert lower_improvement == pytest.approx(0.9509296866462509)
+    assert lower_improvement < metric.meaningful_threshold
+    assert decision.statistically_significant is True
+    assert decision.practically_meaningful is True
+    assert "relative to zero change" in report.decision.conclusion
+    assert "do not establish that the true improvement exceeds" in report.decision.conclusion
+    table = build_decision_table(report.decision)
+    assert table.loc[0, "Observed estimate meets threshold"] == "Yes"
+    assert table.loc[0, "Decision"] == "Statistical improvement; estimate meets threshold"
+    export = build_report_export(report)
+    assert export.loc[0, "interpretation"] == decision.interpretation
+    assert bool(export.loc[0, "observed_estimate_meets_threshold"])
+
+
+@pytest.mark.parametrize("mode, expected", [("confirmatory", True), ("exploratory", False)])
+def test_evidence_role_respects_plan_and_metric(mode, expected) -> None:
+    from dataclasses import replace
+    from golf_performance.domain import ExperimentDesignMode
+    primary = build_metric()
+    secondary = replace(build_metric(key="offline"), is_primary=False)
+    experiment = build_experiment(primary)
+    experiment.metrics.append(secondary)
+    results = pd.DataFrame({
+        "configuration": ["A"] * 3 + ["B"] * 3,
+        "carry": [99, 100, 101, 104, 105, 106],
+        "offline": [9, 10, 11, 14, 15, 16],
+    })
+    decision = evaluate_experiment(analyze_experiment(results, experiment), experiment,
+                                   design_mode=ExperimentDesignMode(mode))
+    assert decision.primary.confirmatory is expected
+    assert decision.metrics[1].confirmatory is False
+    assert decision.primary.interpretation.startswith("Exploratory result:") is (not expected)
+
+
+def test_percentage_conclusion_uses_percentage_units() -> None:
+    metric = build_metric(threshold=10, threshold_type=ThresholdType.PERCENTAGE)
+    results = pd.DataFrame({"configuration": ["A"] * 3 + ["B"] * 3,
+                            "carry": [199, 200, 201, 209, 210, 211]})
+    analysis = analyze_experiment(results, build_experiment(metric))[0]
+    decision = evaluate_metric_decision(analysis, metric)
+    assert decision.statistically_significant
+    assert "(5.00%)" in decision.interpretation
+    assert "threshold of 10%" in decision.interpretation

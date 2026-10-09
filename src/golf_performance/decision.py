@@ -4,7 +4,7 @@ import math
 from dataclasses import dataclass
 from enum import StrEnum
 
-from .domain import Experiment, MetricDefinition, MetricDirection, ThresholdType
+from .domain import Experiment, ExperimentDesignMode, MetricDefinition, MetricDirection, ThresholdType
 from .statistics import MetricAnalysis
 
 
@@ -27,6 +27,7 @@ class MetricDecision:
     metric_name: str
     category: DecisionCategory
     statistically_significant: bool | None
+    # Whether the point estimate meets the threshold, not a hypothesis test.
     practically_meaningful: bool | None
     observed_improvement: float
     observed_improvement_percentage: float | None
@@ -35,6 +36,14 @@ class MetricDecision:
     interpretation: str
     warnings: tuple[str, ...] = ()
     confirmatory: bool = True
+
+    @property
+    def label(self) -> str:
+        if self.category is DecisionCategory.STRONG_MEANINGFUL_IMPROVEMENT:
+            return "Statistical improvement; estimate meets threshold"
+        if self.category is DecisionCategory.MEASURABLE_NOT_PRACTICALLY_MEANINGFUL:
+            return "Statistical change; estimate below threshold"
+        return self.category.value.replace("_", " ").capitalize()
 
 
 @dataclass(frozen=True)
@@ -56,19 +65,25 @@ def _category_interpretation(
     observed_improvement: float,
     practical_threshold: float,
     threshold_type: ThresholdType,
+    unit: str,
 ) -> str:
     threshold_label = (
         f"{practical_threshold:g}"
-        + ("%" if threshold_type is ThresholdType.PERCENTAGE else " units")
+        + ("%" if threshold_type is ThresholdType.PERCENTAGE else f" {unit}")
     )
     if category is DecisionCategory.STRONG_MEANINGFUL_IMPROVEMENT:
-        return f"{metric_name} shows statistical evidence of an improvement that exceeds the predefined practical threshold of {threshold_label}."
+        return (
+            f"{metric_name} shows statistical evidence of improvement relative to zero change. "
+            f"The observed estimate meets the predefined practical threshold of {threshold_label}. "
+            "These checks do not establish that the true improvement exceeds that threshold; "
+            "consider the confidence interval when judging its magnitude."
+        )
     if category is DecisionCategory.MEASURABLE_NOT_PRACTICALLY_MEANINGFUL:
-        return f"{metric_name} shows a statistically detectable change, but the observed improvement ({observed_improvement:.2f}) is below the predefined practical threshold of {threshold_label}."
+        return f"{metric_name} shows a statistically detectable change, but the observed improvement ({observed_improvement:.2f}{'%' if threshold_type is ThresholdType.PERCENTAGE else ' ' + unit}) is below the predefined practical threshold of {threshold_label}."
     if category is DecisionCategory.PROMISING_BUT_UNCERTAIN:
-        return f"{metric_name} exceeded the practical threshold, but the statistical evidence is uncertain; more data may be needed."
+        return f"The observed improvement in {metric_name} meets the practical threshold, but evidence of improvement relative to zero change is uncertain; more data may be needed."
     if category is DecisionCategory.POTENTIALLY_DETRIMENTAL:
-        return f"{metric_name} changed in an unfavorable direction by more than the practical threshold of {threshold_label}, with statistical evidence of deterioration."
+        return f"{metric_name} shows statistical evidence of deterioration relative to zero change. The observed deterioration meets the practical threshold of {threshold_label}; this does not establish that the true deterioration exceeds that threshold."
     if category is DecisionCategory.DETRIMENTAL_BUT_UNCERTAIN:
         return f"{metric_name} changed in a potentially unfavorable direction by more than the practical threshold, but the evidence is uncertain."
     if category is DecisionCategory.INSUFFICIENT_DATA:
@@ -110,7 +125,7 @@ def evaluate_metric_decision(
     warnings: list[str] = []
     if not confirmatory:
         warnings.append(
-            "Secondary metric result is exploratory; its nominal p-value is not confirmatory evidence."
+            "This result is exploratory; its nominal p-value is not confirmatory evidence."
         )
 
     if metric.threshold_type is ThresholdType.ABSOLUTE:
@@ -166,7 +181,8 @@ def evaluate_metric_decision(
         ) + _category_interpretation(
             category,
             metric_name=metric.display_name,
-            observed_improvement=observed_improvement,
+            observed_improvement=(practical_value if practical_value is not None else observed_improvement),
+            unit=metric.unit,
             practical_threshold=metric.meaningful_threshold,
             threshold_type=metric.threshold_type,
         ),
@@ -180,10 +196,13 @@ def evaluate_experiment(
     experiment: Experiment,
     *,
     alpha: float = DEFAULT_ALPHA,
+    design_mode: ExperimentDesignMode = ExperimentDesignMode.CONFIRMATORY,
 ) -> ExperimentDecision:
     """Evaluate metrics in experiment order and summarize primary-metric tradeoffs."""
 
     experiment.validate()
+    if not isinstance(design_mode, ExperimentDesignMode):
+        raise ValueError("Design mode must be confirmatory or exploratory")
     if len(analyses) != len(experiment.metrics):
         raise ValueError("Analyses must contain exactly the experiment's configured metrics")
     by_key = {analysis.metric_key: analysis for analysis in analyses}
@@ -195,7 +214,8 @@ def evaluate_experiment(
             by_key[metric.key],
             metric,
             alpha=alpha,
-            confirmatory=metric.key == experiment.primary_metric.key,
+            confirmatory=(design_mode is ExperimentDesignMode.CONFIRMATORY
+                          and metric.key == experiment.primary_metric.key),
         )
         for metric in experiment.metrics
     )

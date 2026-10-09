@@ -85,14 +85,28 @@ assumptions held, how likely would a result at least this extreme be?
 It is not the probability that B is better or that the result is "due to
 chance." Alpha is the cutoff chosen for declaring statistical significance.
 A decision considers both statistical evidence and practical relevance.
+The practical check applies to the observed estimate. A significant p-value
+and an estimate above the threshold do not establish that the true effect
+exceeds that threshold: the test compares the effect with zero, not with
+the practical threshold. Read the confidence interval to assess uncertainty
+in the size of the improvement.
 
 
 3. Primary method: paired block analysis
 ---------------------------------------
 
 A block is a consecutive group of shots using one configuration. The
-protocol pairs adjacent A and B blocks, in either order, so each comparison
-is made close in time. For example, five A shots followed by five B shots
+protocol pairs adjacent A and B blocks so each comparison is made close
+in time. New plans balance A-then-B and B-then-A pairs and randomize their
+order before data collection. With an odd number of pairs, the counts
+differ by one. The experiment ID makes the plan reproducible; saved plans
+keep their exact sequence. Older saved plans retain their original order.
+
+Balancing prevents one setup from always going second. It can offset a
+constant within-pair order effect, but cannot eliminate changing fatigue,
+carryover from the previous setup, or dependence between pairs. Keep
+separate block IDs even when the same setup ends one pair and starts the
+next. For example, five A shots followed by five B shots
 produce one paired comparison, not ten independent comparisons.
 
 Both blocks must contain the required number of valid values for the
@@ -131,6 +145,11 @@ small sample. Unlike a difference in yards or degrees, this is unitless:
     J = 1 - 3 / (4(k - 1) - 1)
     paired Hedges' g = J * d_z
 
+Paired Hedges' g requires at least three complete pairs. With only two,
+the correction J becomes zero, so the app reports the effect size as
+unavailable and explains why. The mean difference, t-test, and confidence
+interval remain available when variability is nonzero.
+
 For example, d_z = 1 means the average difference equals one SD of the
 pair differences. J reduces the small-sample tendency to overestimate the
 standardized effect. Practical importance still depends on your threshold.
@@ -162,19 +181,28 @@ Planning uses a two-sided paired t-test model (method = paired_block_t),
 with default alpha = 0.05 and target power = 0.80.
 
 Power is the probability of detecting a specified real effect under the
-model. At 80% power, about 80 out of 100 repeated experiments would flag
+model. Here, detection means rejecting zero change, not establishing that
+the true effect exceeds the practical threshold. At 80% power, about 80 out of 100 repeated experiments would flag
 that effect as statistically significant if the planning assumptions held.
 
-Before block data exists, estimate variability from individual-shot SD:
+Prefer the sample SD of paired differences from a separate, comparable
+pilot: calculate B-block mean minus A-block mean for each pair, then take
+the sample SD of those differences. Use the same block size, order design,
+and analysis scale as the planned experiment. Enter SD, not standard error. A small
+pilot gives an uncertain estimate; also examine a plan with a larger SD.
+
+If no pilot estimate is available, approximate variability from shot SD:
 
     estimated_block_difference_SD
         = estimated_shot_SD * sqrt(2 / shots_per_block)
 
     standardized_effect
         = practical_threshold_in_measurement_units
-          / estimated_block_difference_SD
+          / planning_block_difference_SD
 
-Averaging shots reduces variability under the independence assumption;
+Here, planning_block_difference_SD is the supplied pilot SD or the
+shot-based estimate above. Averaging shots reduces variability under the
+independence assumption;
 the factor 2 accounts for subtracting two equally variable block means.
 
 Solve the power equation for the required number of block pairs, round up
@@ -187,15 +215,23 @@ Achieved power is recalculated after rounding. For a chosen shot count,
 convert to block pairs and solve for the smallest effect detectable at the
 target power. This is the minimum detectable effect (MDE):
 
-    MDE = standardized_MDE * estimated_block_difference_SD
+    MDE = standardized_MDE * planning_block_difference_SD
 
 MDE describes the experiment's sensitivity, not the smallest effect that
 matters to you or a guarantee that smaller effects will go undetected.
 
-The SD conversion assumes roughly independent shots within blocks and
-similar variability in A and B. Correlated shots, fatigue, or learning can
-make planning estimates optimistic, meaning more shots may be needed than
-the calculation suggests.
+The SD conversion assumes independent shots within blocks, equal A/B shot
+variances, and zero covariance between paired block means. In general:
+
+    Var(B_mean - A_mean) = Var(B_mean) + Var(A_mean)
+                          - 2 * Cov(A_mean, B_mean)
+
+Covariance describes how the two means move together. The approximation
+omits that term and uses shot variance / block size for each mean. Actual
+block-difference SD can be higher or lower. A supplied pilot SD bypasses
+this conversion and is used consistently for sample size, achieved power,
+and MDE. Both approaches still assume independent differences across pairs;
+neither corrects order bias or guarantees the requested power.
 
 
 5. Legacy method: independent shots
@@ -251,15 +287,18 @@ different SDs, so they should not be compared as interchangeable effect sizes.
 For either method, the formulas involving division by SD or SE require
 nonzero variability. If variability is zero but the difference is nonzero,
 the app reports the inferential results as unavailable. If both are zero,
-it returns a [0, 0] interval, p = 1, and g = 0 as a software convention;
+it returns a [0, 0] interval and p = 1 as a software convention. It also
+returns g = 0, except that paired g remains unavailable with only two pairs;
 this does not establish that future shots will have no variability.
 
 
 6. Interpret the results
 -----------------------
 
-Choose the primary metric before reviewing results; only it is confirmatory,
-meaning it tests the question specified in advance. Secondary metrics are
+Choose the primary metric before reviewing results. It is labeled
+confirmatory only when the selected plan is confirmatory, meaning it tests
+the question specified in advance. In an exploratory plan, every metric
+is labeled exploratory, including the primary metric. Secondary metrics are
 exploratory: they reveal possible tradeoffs or questions for a later test.
 Their nominal p-values are calculated separately, without adjustment for
 examining multiple metrics. Looking at many metrics increases the chance

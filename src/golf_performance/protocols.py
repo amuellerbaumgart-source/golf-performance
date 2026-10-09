@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import math
+import random
 from dataclasses import dataclass, replace
 from typing import Any
 
 from .domain import Experiment, ExperimentDesignMode
 from .power import (
     HARD_SHOT_LIMIT,
+    POWER_METHOD,
     PowerAnalysis,
     calculate_minimum_detectable_effect,
     calculate_power_analysis,
@@ -31,6 +33,7 @@ class TestingProtocol:
     seconds_per_shot: float = DEFAULT_SECONDS_PER_SHOT
     minimum_detectable_effect: float | None = None
     minimum_detectable_effect_percentage: float | None = None
+    order_method: str = "legacy_alternating_blocks"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -40,6 +43,7 @@ class TestingProtocol:
             "instructions": list(self.instructions),
             "power_analysis": self.power_analysis.to_dict(),
             "start_configuration": self.start_configuration,
+            "order_method": self.order_method,
             "design_mode": self.design_mode.value,
             "seconds_per_shot": self.seconds_per_shot,
             "minimum_detectable_effect": self.minimum_detectable_effect,
@@ -55,6 +59,7 @@ class TestingProtocol:
             instructions=tuple(str(item) for item in data["instructions"]),
             power_analysis=PowerAnalysis.from_dict(data["power_analysis"]),
             start_configuration=str(data.get("start_configuration", "A")),
+            order_method=str(data.get("order_method", "legacy_alternating_blocks")),
             design_mode=ExperimentDesignMode(data.get("design_mode", ExperimentDesignMode.CONFIRMATORY.value)),
             seconds_per_shot=float(data.get("seconds_per_shot", DEFAULT_SECONDS_PER_SHOT)),
             minimum_detectable_effect=(
@@ -117,6 +122,10 @@ class TestingProtocol:
                 "minimum_detectable_effect",
                 calculate_minimum_detectable_effect(
                     expected_standard_deviation=self.power_analysis.expected_standard_deviation,
+                    expected_block_difference_standard_deviation=(
+                        self.power_analysis.expected_block_difference_standard_deviation
+                        if self.power_analysis.method == POWER_METHOD else None
+                    ),
                     shots_per_configuration=self.shots_per_configuration,
                     block_size=self.block_size,
                     alpha=self.power_analysis.alpha,
@@ -145,16 +154,22 @@ class TestingProtocol:
             raise ValueError("Protocol sequence must contain only A and B")
         if self.sequence[0] != self.start_configuration:
             raise ValueError("Protocol sequence must start with the configured starting condition")
-        for block_index in range(self.blocks_per_configuration * 2):
-            expected_configuration = (
-                self.start_configuration
-                if block_index % 2 == 0
-                else "B" if self.start_configuration == "A" else "A"
-            )
-            start = block_index * self.block_size
-            end = start + self.block_size
-            if self.sequence[start:end] != (expected_configuration,) * self.block_size:
-                raise ValueError("Protocol sequence must alternate complete blocks")
+        if self.order_method not in {"legacy_alternating_blocks", "balanced_randomized_pairs"}:
+            raise ValueError("Unknown protocol order method")
+        pair_starts = []
+        for pair_index in range(self.blocks_per_configuration):
+            start = pair_index * 2 * self.block_size
+            first = self.sequence[start]
+            second = "B" if first == "A" else "A"
+            expected = (first,) * self.block_size + (second,) * self.block_size
+            if self.sequence[start:start + 2 * self.block_size] != expected:
+                raise ValueError("Each pair must contain one complete A block and one complete B block")
+            pair_starts.append(first)
+        if self.order_method == "balanced_randomized_pairs":
+            if abs(pair_starts.count("A") - pair_starts.count("B")) > 1:
+                raise ValueError("A/B and B/A pair orders must be balanced")
+        elif any(first != self.start_configuration for first in pair_starts):
+            raise ValueError("Legacy protocol sequence must alternate complete blocks")
 
     @property
     def total_shots(self) -> int:
@@ -248,15 +263,22 @@ def _build_sequence(
     shots_per_configuration: int,
     block_size: int,
     start_configuration: str,
+    seed: int,
 ) -> tuple[str, ...]:
     blocks_per_configuration = shots_per_configuration // block_size
     second_configuration = "B" if start_configuration == "A" else "A"
+    # Balance orders; for odd pair counts the random starting condition gets
+    # the extra pair. Keep the first condition shared between plan options.
+    pair_starts = ([start_configuration] * ((blocks_per_configuration + 1) // 2)
+                   + [second_configuration] * (blocks_per_configuration // 2))
+    pair_starts.remove(start_configuration)
+    random.Random(seed).shuffle(pair_starts)
+    pair_starts.insert(0, start_configuration)
     sequence: list[str] = []
-    for block_index in range(blocks_per_configuration * 2):
-        configuration = (
-            start_configuration if block_index % 2 == 0 else second_configuration
-        )
-        sequence.extend([configuration] * block_size)
+    for first in pair_starts:
+        second = "B" if first == "A" else "A"
+        sequence.extend([first] * block_size)
+        sequence.extend([second] * block_size)
     return tuple(sequence)
 
 
@@ -274,6 +296,7 @@ def _build_protocol(
     start_configuration = "A" if experiment.experiment_id.int % 2 == 0 else "B"
     minimum_detectable_effect = calculate_minimum_detectable_effect(
         expected_standard_deviation=power_analysis.expected_standard_deviation,
+        expected_block_difference_standard_deviation=power_analysis.expected_block_difference_standard_deviation,
         shots_per_configuration=shots_per_configuration,
         block_size=block_size,
         alpha=power_analysis.alpha,
@@ -307,12 +330,16 @@ def _build_protocol(
         f"MINIMUM DETECTABLE EFFECT: {minimum_detectable_effect:g} {primary_metric.unit}",
         f"TARGET POWER: {power_analysis.target_power:.0%} at alpha={power_analysis.alpha:g}",
         f"PAIRED BLOCKS: {shots_per_configuration // block_size} per configuration",
+        f"VARIABILITY SOURCE: {power_analysis.variability_source}",
         f"EXPECTED BLOCK-DIFFERENCE SD: {power_analysis.expected_block_difference_standard_deviation:g} {primary_metric.unit}",
         f"STARTING CONFIGURATION: {start_configuration}",
         f"ANALYSIS TRANSFORM: {primary_metric.analysis_transform.value}",
         "Keep everything else constant where reasonably possible.",
         "Use the same ball model and target throughout the test.",
         "Warm up before recording valid shots.",
+        "PAIR ORDER: Balanced randomized A/B and B/A pairs; an odd pair count differs by one.",
+        "Follow the saved order and block IDs, including separate blocks when a configuration repeats across a pair boundary.",
+        "Balance reduces systematic order effects but does not eliminate carryover, changing fatigue, or dependence between pairs.",
         "Apply exclusion rules before reviewing the results.",
     ) + tuple(warnings)
 
@@ -323,10 +350,12 @@ def _build_protocol(
             shots_per_configuration=shots_per_configuration,
             block_size=block_size,
             start_configuration=start_configuration,
+            seed=experiment.experiment_id.int,
         ),
         instructions=instructions,
         power_analysis=power_analysis,
         start_configuration=start_configuration,
+        order_method="balanced_randomized_pairs",
         design_mode=mode,
         seconds_per_shot=seconds_per_shot,
         minimum_detectable_effect=minimum_detectable_effect,
@@ -337,7 +366,8 @@ def _build_protocol(
 def generate_protocol_options(
     experiment: Experiment,
     *,
-    expected_standard_deviation: float,
+    expected_standard_deviation: float | None = None,
+    expected_block_difference_standard_deviation: float | None = None,
     exploratory_shots_per_configuration: int = DEFAULT_EXPLORATORY_SHOTS_PER_CONFIGURATION,
     expected_baseline_mean: float | None = None,
     alpha: float = 0.05,
@@ -377,6 +407,7 @@ def generate_protocol_options(
     power_analysis = calculate_power_analysis(
         experiment.primary_metric,
         expected_standard_deviation=expected_standard_deviation,
+        expected_block_difference_standard_deviation=expected_block_difference_standard_deviation,
         expected_baseline_mean=expected_baseline_mean,
         alpha=alpha,
         target_power=target_power,
@@ -408,7 +439,8 @@ def generate_protocol_options(
 def generate_protocol(
     experiment: Experiment,
     *,
-    expected_standard_deviation: float,
+    expected_standard_deviation: float | None = None,
+    expected_block_difference_standard_deviation: float | None = None,
     expected_baseline_mean: float | None = None,
     alpha: float = 0.05,
     target_power: float = 0.80,
@@ -420,6 +452,7 @@ def generate_protocol(
     confirmatory = generate_protocol_options(
         experiment,
         expected_standard_deviation=expected_standard_deviation,
+        expected_block_difference_standard_deviation=expected_block_difference_standard_deviation,
         expected_baseline_mean=expected_baseline_mean,
         alpha=alpha,
         target_power=target_power,

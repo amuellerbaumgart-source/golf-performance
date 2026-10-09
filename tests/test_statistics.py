@@ -313,3 +313,54 @@ def test_paired_bootstrap_interval_is_reproducible_when_enough_pairs_exist() -> 
     assert first.bootstrap_confidence_interval_upper is not None
     assert first.bootstrap_confidence_interval_lower == second.bootstrap_confidence_interval_lower
     assert first.bootstrap_confidence_interval_upper == second.bootstrap_confidence_interval_upper
+
+
+def test_balanced_pairs_cancel_constant_order_effect() -> None:
+    from dataclasses import replace
+    current_metric = metric()
+    protocol = _paired_protocol(current_metric, exploratory_shots=30)
+    results = build_results_template(protocol, [current_metric.key])
+    # No treatment effect: every later block gains 2 yards from warming up.
+    results[current_metric.key] = [100 + 2 * (i // 5) for i in range(protocol.total_shots)]
+    balanced = analyze_metric(results, current_metric, protocol)
+    assert balanced.difference == pytest.approx(0.0)
+    assert balanced.p_value == pytest.approx(1.0)
+    first = protocol.start_configuration
+    second = "B" if first == "A" else "A"
+    legacy = replace(
+        protocol, order_method="legacy_alternating_blocks",
+        sequence=((first,) * 5 + (second,) * 5) * protocol.blocks_per_configuration,
+    )
+    results["configuration"] = legacy.sequence
+    unbalanced = analyze_metric(results, current_metric, legacy)
+    assert abs(unbalanced.difference) == pytest.approx(2.0)
+
+
+@pytest.mark.parametrize("differences", [[2., 4.], [-2., -4.], [-1., 1.]])
+def test_two_pairs_have_no_hedges_g_but_retain_t_inference(differences) -> None:
+    from scipy import stats
+    from golf_performance.statistics import _paired_statistics
+    values = pd.Series(differences)
+    lower, upper, p_value, effect, warnings = _paired_statistics(values)
+    reference = stats.ttest_1samp(values, 0)
+    interval = reference.confidence_interval()
+    assert effect is None
+    assert p_value == pytest.approx(reference.pvalue)
+    assert lower == pytest.approx(interval.low)
+    assert upper == pytest.approx(interval.high)
+    assert any("at least three" in warning for warning in warnings)
+
+
+@pytest.mark.parametrize("differences", [[0., 0.], [3., 3.]])
+def test_two_constant_pairs_do_not_report_zero_effect_size(differences) -> None:
+    from golf_performance.statistics import _paired_statistics
+    result = _paired_statistics(pd.Series(differences))
+    assert result[3] is None
+    assert any("at least three" in warning for warning in result[4])
+
+
+def test_three_pairs_retain_corrected_effect_size() -> None:
+    from golf_performance.statistics import _paired_statistics
+    result = _paired_statistics(pd.Series([2., 4., 6.]))
+    assert result[3] == pytest.approx((4. / 2.) * (1. - 3. / 7.))
+    assert not result[4]

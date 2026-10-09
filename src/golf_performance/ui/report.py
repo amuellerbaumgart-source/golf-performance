@@ -100,7 +100,9 @@ def _build_difference_chart(report: ExperimentReport) -> alt.Chart:
 
 def _render_conclusion(report: ExperimentReport) -> None:
     category = report.decision.primary.category
-    if category is DecisionCategory.STRONG_MEANINGFUL_IMPROVEMENT:
+    if not report.decision.primary.confirmatory:
+        st.info(report.decision.conclusion)
+    elif category is DecisionCategory.STRONG_MEANINGFUL_IMPROVEMENT:
         st.success(report.decision.conclusion)
     elif category in {
         DecisionCategory.PROMISING_BUT_UNCERTAIN,
@@ -184,7 +186,6 @@ def render_report(experiment, recommendation, protocol, storage: FileSystemStora
         st.altair_chart(
             _build_distribution_chart(report, results),
             width="stretch",
-            alt="Primary metric distributions for baseline A and treatment B",
         )
 
     with st.container(border=True):
@@ -192,13 +193,12 @@ def render_report(experiment, recommendation, protocol, storage: FileSystemStora
         st.altair_chart(
             _build_difference_chart(report),
             width="stretch",
-            alt="Metric differences with 95 percent confidence intervals",
         )
 
     with st.container(border=True):
         st.subheader("Metric results")
         export_frame = build_report_export(report)
-        st.dataframe(export_frame, width="stretch", hide_index=True, alt="Experiment report metric results")
+        st.dataframe(export_frame, width="stretch", hide_index=True)
         st.download_button(
             "Download CSV summary",
             data=export_frame.to_csv(index=False).encode("utf-8"),
@@ -207,6 +207,12 @@ def render_report(experiment, recommendation, protocol, storage: FileSystemStora
             icon=":material/download:",
             key="download_report_csv",
         )
+
+    for analysis in report.analyses:
+        if analysis.warnings:
+            with st.expander(f"Analysis notes · {analysis.metric_name}"):
+                for warning in analysis.warnings:
+                    st.write(warning)
 
     with st.container(border=True):
         st.subheader("Limitations")

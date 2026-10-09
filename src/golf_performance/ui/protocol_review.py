@@ -34,6 +34,18 @@ def _render_option_card(
             f"{protocol.power_analysis.expected_block_difference_standard_deviation:.2f} {experiment.primary_metric.unit}"
         )
 
+        st.caption(
+            "Variability source: pilot paired-block differences"
+            if protocol.power_analysis.variability_source == "pilot_block_difference_sd"
+            else "Variability source: individual-shot approximation"
+        )
+
+        st.caption(
+            "Order: balanced, randomized A/B and B/A pairs. Follow the saved block IDs even when the same setup appears in consecutive blocks."
+            if protocol.order_method == "balanced_randomized_pairs"
+            else "Order: original alternating blocks. One setup always goes second within each pair, so order effects may influence results."
+        )
+
         st.metric(
             "Minimum detectable effect",
             f"{protocol.minimum_detectable_effect:.2f}",

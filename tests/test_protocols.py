@@ -162,3 +162,96 @@ def test_protocol_model_rejects_mismatched_power_recommendation() -> None:
             power_analysis=power_analysis,
             start_configuration="A",
         )
+
+
+def test_pilot_variability_survives_storage_and_mde_recalculation(tmp_path) -> None:
+    from golf_performance.storage import FileSystemStorage
+    from golf_performance.protocols import generate_protocol_options, TestingProtocol
+    from golf_performance.power import calculate_minimum_detectable_effect
+
+    current = experiment()
+    options = generate_protocol_options(current, expected_block_difference_standard_deviation=9.0)
+    storage = FileSystemStorage(tmp_path)
+    storage.save_experiment(current, options)
+    restored = storage.load_experiment(str(current.experiment_id)).protocol_recommendation
+    for original, saved in zip(options.options, restored.options):
+        assert saved.power_analysis.variability_source == "pilot_block_difference_sd"
+        assert saved.power_analysis.expected_standard_deviation is None
+        assert saved.minimum_detectable_effect == original.minimum_detectable_effect
+        payload = saved.to_dict()
+        payload.pop("minimum_detectable_effect")
+        recalculated = TestingProtocol.from_dict(payload)
+        expected = calculate_minimum_detectable_effect(
+            expected_block_difference_standard_deviation=9.0,
+            shots_per_configuration=saved.shots_per_configuration,
+            block_size=saved.block_size,
+        )
+        assert recalculated.minimum_detectable_effect == pytest.approx(expected)
+
+
+@pytest.mark.parametrize("pairs", [2, 3, 6, 7, 20])
+@pytest.mark.parametrize("seed", [1, 2, 10, 11])
+def test_new_protocol_balances_pair_orders(pairs, seed) -> None:
+    from uuid import UUID
+    from golf_performance.protocols import generate_protocol_options
+    current = experiment()
+    current.experiment_id = UUID(int=seed)
+    protocol = generate_protocol_options(
+        current, expected_standard_deviation=8,
+        exploratory_shots_per_configuration=pairs * 5,
+    ).exploratory
+    starts = protocol.sequence[::10]
+    assert abs(starts.count("A") - starts.count("B")) <= 1
+    assert protocol.order_method == "balanced_randomized_pairs"
+    for i in range(pairs):
+        pair = protocol.sequence[i * 10:(i + 1) * 10]
+        assert pair in (("A",) * 5 + ("B",) * 5, ("B",) * 5 + ("A",) * 5)
+    assert Protocol.from_dict(protocol.to_dict()) == protocol
+
+
+def test_pair_order_varies_between_experiments_with_same_start() -> None:
+    from uuid import UUID
+    from golf_performance.protocols import generate_protocol_options
+    sequences = set()
+    for seed in range(2, 22, 2):
+        current = experiment()
+        current.experiment_id = UUID(int=seed)
+        sequences.add(generate_protocol_options(
+            current, expected_standard_deviation=8,
+            exploratory_shots_per_configuration=40,
+        ).exploratory.sequence)
+    assert len(sequences) > 1
+
+
+def test_new_protocol_rejects_unbalanced_and_malformed_pairs() -> None:
+    from dataclasses import replace
+    from golf_performance.protocols import generate_protocol_options
+    protocol = generate_protocol_options(experiment(), expected_standard_deviation=8).exploratory
+    first = protocol.start_configuration
+    second = "B" if first == "A" else "A"
+    unbalanced = ((first,) * 5 + (second,) * 5) * protocol.blocks_per_configuration
+    with pytest.raises(ValueError, match="balanced"):
+        replace(protocol, sequence=unbalanced)
+    malformed = list(protocol.sequence)
+    malformed[1] = second
+    with pytest.raises(ValueError, match="complete A block"):
+        replace(protocol, sequence=tuple(malformed))
+    malformed = list(protocol.sequence)
+    malformed[5:10] = [first] * 5
+    with pytest.raises(ValueError, match="complete A block"):
+        replace(protocol, sequence=tuple(malformed))
+
+
+def test_legacy_saved_order_is_preserved() -> None:
+    from golf_performance.protocols import generate_protocol_options
+    protocol = generate_protocol_options(experiment(), expected_standard_deviation=8).exploratory
+    payload = protocol.to_dict()
+    payload.pop("order_method")
+    first = protocol.start_configuration
+    second = "B" if first == "A" else "A"
+    original = ((first,) * 5 + (second,) * 5) * protocol.blocks_per_configuration
+    payload["sequence"] = list(original)
+    restored = Protocol.from_dict(payload)
+    assert restored.order_method == "legacy_alternating_blocks"
+    assert restored.sequence == original
+    assert Protocol.from_dict(restored.to_dict()).sequence == original

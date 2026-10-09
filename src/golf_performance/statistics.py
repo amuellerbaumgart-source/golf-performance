@@ -183,17 +183,22 @@ def _paired_statistics(
             ("At least two complete A/B block pairs are required for inferential statistics.",),
         )
 
+    effect_size_available = len(paired_differences) >= 3
+    effect_size_warnings = (() if effect_size_available else (
+        "Paired Hedges' g is unavailable: at least three complete A/B block pairs are required. "
+        "With two pairs, the small-sample correction collapses to zero and is not a valid effect-size estimate.",
+    ))
     difference = float(paired_differences.mean())
     standard_deviation = float(paired_differences.std(ddof=1))
     if standard_deviation == 0:
         if difference == 0:
-            return 0.0, 0.0, 1.0, 0.0, ()
+            return 0.0, 0.0, 1.0, (0.0 if effect_size_available else None), effect_size_warnings
         return (
             None,
             None,
             None,
             None,
-            ("Paired block differences have zero variability, so conventional paired inferential statistics are undefined.",),
+            ("Paired block differences have zero variability, so conventional paired inferential statistics are undefined.",) + effect_size_warnings,
         )
 
     degrees_of_freedom = len(paired_differences) - 1
@@ -204,15 +209,18 @@ def _paired_statistics(
     )
     margin = critical_value * standard_error
     p_value = float(2 * stats.t.sf(abs(t_statistic), degrees_of_freedom))
-    cohen_d_z = difference / standard_deviation
-    correction = 1 - 3 / (4 * degrees_of_freedom - 1)
-    hedges_g = cohen_d_z * correction
+    hedges_g = None
+    if effect_size_available:
+        cohen_d_z = difference / standard_deviation
+        correction = 1 - 3 / (4 * degrees_of_freedom - 1)
+        corrected_effect = cohen_d_z * correction
+        hedges_g = corrected_effect if math.isfinite(corrected_effect) else None
     return (
         difference - margin,
         difference + margin,
         p_value if math.isfinite(p_value) else None,
-        hedges_g if math.isfinite(hedges_g) else None,
-        (),
+        hedges_g,
+        effect_size_warnings,
     )
 
 

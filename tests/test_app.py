@@ -108,3 +108,20 @@ def test_app_can_open_shot_entry_after_selecting_a_protocol() -> None:
 
     assert not app.exception
     assert any("Enter shot results" in header.value for header in app.header)
+
+
+def test_app_can_plan_from_pilot_block_sd() -> None:
+    app = AppTest.from_file(str(APP_PATH)).run()
+    for key, value in {
+        "experiment_name": "Pilot SD plan", "changed_variable": "Loft",
+        "baseline_value": "9", "treatment_value": "10", "primary_goal": "Carry",
+    }.items():
+        app.get_by_key(key).set_value(value)
+    app.get_by_key("planning_variability_source").select("Use pilot paired-block differences").run()
+    app.get_by_key("pilot_block_sd").set_value(7.0)
+    app.get_by_key("generate_protocol_options").click().run()
+    assert not app.exception
+    recommendation = app.session_state["protocol_recommendation"]
+    assert recommendation.confirmatory.power_analysis.expected_block_difference_standard_deviation == 7.0
+    assert recommendation.confirmatory.power_analysis.expected_standard_deviation is None
+    assert any("pilot paired-block differences" in caption.value for caption in app.caption)

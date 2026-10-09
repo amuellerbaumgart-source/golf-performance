@@ -158,3 +158,47 @@ def test_power_analysis_rejects_boolean_numeric_inputs() -> None:
 
     with pytest.raises(ValueError):
         calculate_power_analysis(metric(), expected_standard_deviation=2.0, block_size=True)
+
+
+def test_pilot_sd_controls_sample_size_power_and_mde() -> None:
+    from scipy.stats import nct, t
+    from golf_performance.power import PowerAnalysis
+
+    result = calculate_power_analysis(metric(), expected_block_difference_standard_deviation=8.0)
+    k = result.recommended_block_pairs
+    critical = t.ppf(0.975, k - 1)
+    noncentrality = 3.0 / 8.0 * math.sqrt(k)
+    independent_power = nct.sf(critical, k - 1, noncentrality) + nct.cdf(-critical, k - 1, noncentrality)
+    assert result.achieved_power == pytest.approx(independent_power)
+    assert result.achieved_power >= 0.8
+    assert result.expected_standard_deviation is None
+    assert result.variability_source == "pilot_block_difference_sd"
+    assert PowerAnalysis.from_dict(result.to_dict()) == result
+    mde = calculate_minimum_detectable_effect(
+        expected_block_difference_standard_deviation=8.0,
+        shots_per_configuration=k * 5,
+    )
+    assert mde <= 3.0
+    assert mde > 2.9
+    larger = calculate_power_analysis(metric(), expected_block_difference_standard_deviation=12.0)
+    assert larger.recommended_block_pairs > k
+    # A pilot SD is already for this block size; do not divide it by sqrt(block size).
+    other = calculate_power_analysis(metric(), expected_block_difference_standard_deviation=8.0, block_size=10)
+    assert other.recommended_block_pairs == k
+
+
+@pytest.mark.parametrize("value", [0, -1, float("nan"), float("inf"), True])
+def test_invalid_pilot_sd_rejected(value) -> None:
+    with pytest.raises(ValueError, match="SD"):
+        calculate_power_analysis(metric(), expected_block_difference_standard_deviation=value)
+    with pytest.raises(ValueError, match="SD"):
+        calculate_minimum_detectable_effect(expected_block_difference_standard_deviation=value, shots_per_configuration=30)
+
+
+def test_old_power_payload_retains_shot_approximation() -> None:
+    from golf_performance.power import PowerAnalysis
+    result = calculate_power_analysis(metric(), expected_standard_deviation=6.0)
+    payload = result.to_dict()
+    payload.pop("variability_source")
+    assert PowerAnalysis.from_dict(payload) == result
+    assert any("zero covariance" in warning for warning in result.warnings)
